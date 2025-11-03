@@ -104,7 +104,9 @@ Arguments:
 
 ## Accelerated Path Patching
 ### Accuracy
+![image](img/accuracy-app.PNG)
 
 ### Efficency
+![image](img/GFLOPS-app.PNG)
 
 ## Citation
