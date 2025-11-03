@@ -73,6 +73,17 @@ class IOI_dataset():
     
         self.correct_answers = self.answer_tokens[:, 0]
         self.wrong_answers = self.answer_tokens[:, 1]
+        
+        
+        self.group_per_sample = t.zeros([self.N, 2], dtype=int)
+        idx=0
+        for group_idx, group in enumerate(self.groups):
+            for elem in group:
+                self.group_per_sample[idx] = t.Tensor([elem, group_idx])
+                idx += 1
+                
+        
+        
         self.dataset = TensorDataset(
             self.clean_tokens,        # [N, seq_len], 
             self.corrupted_tokens,    # [N, seq_len]
@@ -80,6 +91,7 @@ class IOI_dataset():
             self.correct_answers,     # [N, 1]
             self.wrong_answers,       # [N, x]            
             self.target_idx,          # [N, 2]
+            self.group_per_sample
         )
         
     
@@ -94,6 +106,7 @@ class IOI_dataset():
             "correct_answers": self.correct_answers[idx],
             "wrong_answers": self.wrong_answers[idx],
             "target_idx": self.target_idx[idx],
+            "group_per_sample": self.group_per_sample[idx]
         }
         
     def process_dataset_for_activation_patching(self):

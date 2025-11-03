@@ -27,9 +27,9 @@ from matplotlib.pyplot import imshow
 
 from dataset.loader import load_dataset
 from utils.utils import save_img, create_folder, save_parser_information, save_circuit, store_df, save_parser_information, load_df
-from utils.PatchingMetric import ave_logit_diff
+from utils.metrics import ave_logit_diff
 from utils.eval_circuit import *
-from utils.Visualization import outline_IoU, outline_IOI, heat_map_sparsity, ROC_curve, TP_curve, two_TP_curve, two_ROC_curve
+from utils.visualization import outline_IoU, outline_IOI, heat_map_sparsity, ROC_curve, TP_curve, two_TP_curve, two_ROC_curve
 import time
 from fvcore.nn import FlopCountAnalysis
 from utils.model_loader import get_gpt2_adapt_to_llama, load_tokenizer, load_hooked_transformer, load_transformer

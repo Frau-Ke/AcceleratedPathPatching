@@ -70,7 +70,7 @@ def load_transformer(
     output_attentions=False, 
 
 ) -> AutoModelForCausalLM:
-    print(f"load {model_name} as CasualLLM")
+    print(f"loading {model_name} as CasualLLM")
 
     if output_attentions:
         model =  AutoModelForCausalLM.from_pretrained(
@@ -155,10 +155,7 @@ def get_Llama_transformer(
     
     for i in range(32):
         model.model.layers[i].self_attn.o_proj.bias = torch.nn.Parameter(torch.zeros_like(model.model.layers[i].self_attn.o_proj.bias, device=device))  # 或 'cuda'
-        #model.model.layers[i].mlp.down_proj.bias = torch.nn.Parameter(torch.zeros_like(model.model.layers[i].mlp.down_proj.bias, device='cpu'))  # 或 'cuda'
-        torch.nn.init.zeros_(model.model.layers[i].self_attn.o_proj.bias)
-        #torch.nn.init.zeros_(model.model.layers[i].mlp.down_proj.bias)
-        
+        torch.nn.init.zeros_(model.model.layers[i].self_attn.o_proj.bias)        
 
     return model
 

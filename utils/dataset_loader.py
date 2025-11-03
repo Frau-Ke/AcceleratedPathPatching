@@ -2,18 +2,28 @@ from transformers import AutoTokenizer
 import torch
 from jaxtyping import Float
 from torch import Tensor
-from utils.PatchingMetric import *
+from utils.metrics import *
 from functools import partial
 
 
 def predict_target_token(model, dataset, tokenizer:AutoTokenizer, device:str="cuda", n=1, use_corrupted:bool=False):
+    """Predict the Target token for samples of the clean and corrupted dataset. Only used for testing purposes.
 
-    # Forward pass
+    Args:
+        model (_type_): model
+        dataset (_type_): dataset
+        tokenizer (AutoTokenizer): tokenizer
+        device (str, optional): device. Defaults to "cuda".
+        n (int, optional): number of smaples. Defaults to 1.
+        use_corrupted (bool, optional): If true, corrupted dataset, else clean dataset. Defaults to False.
+    """
+    
     if use_corrupted:
         tokens = dataset.corrupted_tokens.to(device)
     else:
         tokens = dataset.clean_tokens.to(device)
         
+    # Get the logits
     with torch.no_grad():
         outputs = model(tokens[:n])
     try:
@@ -23,6 +33,7 @@ def predict_target_token(model, dataset, tokenizer:AutoTokenizer, device:str="cu
     
     starts = dataset.start
     logits = outputs[dataset.target_idx[:n, 0], dataset.target_idx[:n, 1]]  # Logits for the last token
+    
     for j in range(n):
         target_idx = dataset.target_idx[j, 1]
         # Get top 10 tokens and probabilities
@@ -37,16 +48,8 @@ def predict_target_token(model, dataset, tokenizer:AutoTokenizer, device:str="cu
             print(f"{tokenizer.decode(token_id):<10} | Probability: {token_prob:.4f}")
         print("\n")
         
-        
-def init_metric_and_cache_average(
-    clean_logits: Float[Tensor, "batch seq token_embed"],
-    corrupted_logits: Float[Tensor, "batch seq token_embed" ],
-    task:str, 
-    patching_method: str,
-    metric_name: str,
-    dataset, 
-    model_name: str = "gpt2",
-    ) :
+    
+    
     """ initialize the metric used.
     
     Choose between logit_diff, probability and KL_divergence metric
@@ -62,6 +65,31 @@ def init_metric_and_cache_average(
     Returns:
         Callable: chosen metric
     """
+    
+def init_metric_and_cache_average(
+    clean_logits: Float[Tensor, "batch seq token_embed"],
+    corrupted_logits: Float[Tensor, "batch seq token_embed" ],
+    task:str, 
+    patching_method: str,
+    metric_name: str,
+    dataset, 
+    model_name: str = "gpt2",
+    ) :
+    """Initialize the metric and get the average performance under the clean and corrupted dataset.
+    Args:
+        clean_logits (Float[Tensor,  "batch seq token_embed"]): clean_logits
+        corrupted_logits (Float[Tensor,  "batch seq token_embed"]): corrupted_logits
+        task (str): task. ["ioi", "GreaterThan", "GenderedPronouns", "induction", "Docstring"]
+        patching_method (str): patching method. ["path_patching", "activation_patching", "acdc"]
+        metric_name (str): name of the metric. ["logits_diff", "probs", "KL_divergence"]
+        dataset (_type_): dataset
+        model_name (str, optional): model_name. Defaults to "gpt2".
+
+    Returns:
+        _type_: _description_
+    """
+    
+    ### Average Logits Difference
     if metric_name == "logits_diff":
         assert task in ["ioi", "induction", "GreaterThan", "GenderedPronouns", "Docstring"], "Logits difference metric can only be used with the tasks ioi, docstring or greaterThan"
 
@@ -106,8 +134,9 @@ def init_metric_and_cache_average(
                                 task=task
                                 )
     
+    
+    ### Probability
     elif metric_name == "probs": 
-        
         if task == "GreaterThan":
             base_val = logprobs_greater_than(
                     logits= dataset.clean_logits,
@@ -176,6 +205,8 @@ def init_metric_and_cache_average(
                 last_seq_element_only = True
                 )
     
+    
+    ### KL Divergence
     elif metric_name == "KL_divergence":
         if patching_method == "activation":
             clean_distribution_average = KL_divergence(
@@ -244,7 +275,7 @@ def print_whole_dataset(dataset):
 def start_of_prompt(token:list, tokenizer:AutoTokenizer, start_text:str):
     """Find the beginning of a prompt. 
     For GPT2 very easy: most of the times idx=0.
-    For Qwen: find "<|im_start|>user\n" token. After that the prompt starts    
+    For Qwen-Instruct: find "<|im_start|>user\n" token. After that the prompt starts    
     Args:
         prompts (list(str)): one tokenized prompt
         tokenizer (_type_): tkenizer
@@ -261,6 +292,14 @@ def start_of_prompt(token:list, tokenizer:AutoTokenizer, start_text:str):
         
         
 def end_of_prompt(token:list, tokenizer:AutoTokenizer, end_text:str, device="cuda"):
+    """Find the end of a prompt. 
+    For GPT2 very easy: most of the times idx=-1.
+
+    Args:
+        prompts (list(str)): one tokenized prompt
+        tokenizer (_type_): tkenizer
+        start_token (_type_): string that signals the start of the prompt
+    """
     token = token.to(device)
     end_tokens = torch.tensor(tokenizer(end_text).input_ids).to(device)
     window_size = end_tokens.size(0)

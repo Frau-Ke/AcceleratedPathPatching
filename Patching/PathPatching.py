@@ -14,10 +14,10 @@ from tqdm import tqdm
 import pandas as pd
 import itertools
 from datetime import datetime
-from utils.PatchingMetric import *
+from utils.metrics import *
 from Patching.TaskInterface import TaskInterface
-from utils.Visualization import heat_map_layer_head
-from utils.utils import store_df
+from utils.visualization import heat_map_path_patching
+from utils.data_io import store_df
 
 # FLOPs and computation time
 from fvcore.nn import FlopCountAnalysis
@@ -153,7 +153,7 @@ class PathPatching(TaskInterface):
         self._model.reset_hooks()
         results = t.zeros(self._model.cfg.n_layers, n_head, device=self._device, dtype=t.float32)
         n_forward_passes = 0
-        # patterns to filter
+
         # sender is either hook_z or mlp out
         z_pattern = lambda name:name.endswith("z")
         mlp_pattern = lambda name:name.endswith("mlp_out")
@@ -164,10 +164,10 @@ class PathPatching(TaskInterface):
 
         # 1) record the attention patterns of all head under the original and the new distribution
         if clean_cache is None:
-            _, clean_cache = self._model.run_with_cache(self.clean_tokens, names_filter=sender_pattern, return_type=None)
+            _, clean_cache = self._model.run_with_cache(self.clean_tokens, names_filter=z_pattern, return_type=None)
             n_forward_passes += 1
         if corrupted_cache is None:
-            _, corrupted_cache = self._model.run_with_cache(self.corrupted_tokens, names_filter=sender_pattern, return_type=None)
+            _, corrupted_cache = self._model.run_with_cache(self.corrupted_tokens, names_filter=z_pattern, return_type=None)
             n_forward_passes += 1
 
         
@@ -316,23 +316,21 @@ class PathPatching(TaskInterface):
     
     def patch_whole_graph(
         self,        
-        PRUNING_CIRCUIT=None, 
-        subfolder=None, 
-        k=1,
-        alpha=0.3, 
-        mode="linear", 
-        scale=0.1,
-        min_activation_threshold=0.02,
-        save_every_x_steps=2, 
-        verbose=False, 
-        print_vals=True, 
-        
-        PP_information=None,
-        old_results=None, 
+        PRUNING_CIRCUIT:dict=None, 
+        subfolder:str=None, 
+        scale:float=1,
+        min_activation_threshold:float=0.02,
+        resid_scale:float=2,
 
-        save_img=False, 
-        show_img=True, 
-        resid_scale=1.5
+        save_every_x_steps:int=2, 
+        verbose:bool=False, 
+        print_vals:bool=True, 
+        
+        PP_information:dict=None,
+        old_results:dict=None, 
+
+        save_img:bool=False, 
+        show_img:bool=True, 
         ):
         
         """
@@ -345,21 +343,15 @@ class PathPatching(TaskInterface):
             5.) Define important sender to temporal receivers as new receivers
          """
 
-        print("patch GPT model")
         total_n_heads = self._model.cfg.n_heads * self._model.cfg.n_layers
-
+        
         # continue from intermediate results 
         start_time = time.time() 
-        idx = 0
-
-        #print("start time", start_time)
-        
+        idx = 0   
+             
         # load old, intermediate information, if given
         if PP_information is not None:
-            print("load old information")
             CIRCUIT, receivers, visited_heads = PP_information.values()
-            print("done loading")
-            print("length receiver", len(receivers))
         else:
             CIRCUIT={}     
             receivers, visited_heads = [], []
@@ -386,10 +378,7 @@ class PathPatching(TaskInterface):
             metric_diff_no_nan = t.nan_to_num(metric_diff, nan=0.0)
             
             senders = self.get_important_heads_distance_variance_threshold(
-                metric_diff_no_nan, 
-                k=k,
-                alpha=alpha, 
-                mode=mode, 
+                metric_diff_no_nan,  
                 scale=resid_scale, 
                 min_activation_threshold=min_activation_threshold, 
                 verbose=verbose
@@ -405,7 +394,7 @@ class PathPatching(TaskInterface):
                     "resid_post",
                     (self._model.cfg.n_layers-1, None), 
                     senders=senders, 
-                    print_vals=print_vals,
+                    print_scores=print_vals,
                     save_img=save_img, 
                     show_img=show_img
                     )   
@@ -498,9 +487,6 @@ class PathPatching(TaskInterface):
                 # these attention heads have an significant influence on the output  -> all z-component
                 senders = self.get_important_heads_distance_variance_threshold(
                     metric_diff_no_nan,
-                    k=k,
-                    alpha=alpha, 
-                    mode=mode, 
                     scale=scale, 
                     min_activation_threshold=min_activation_threshold,
                     verbose=verbose
@@ -517,7 +503,7 @@ class PathPatching(TaskInterface):
                             receiver_name, 
                             receiver_head, 
                             senders=senders, 
-                            print_vals=print_vals, 
+                            print_scores=print_vals, 
                             save_img=save_img, 
                             show_img=show_img
                             ) 
@@ -537,23 +523,21 @@ class PathPatching(TaskInterface):
     
     def patch_whole_graph_qwen(
         self,        
-        PRUNING_CIRCUIT=None, 
-        subfolder=None, 
-        k=1,
-        alpha=0.3, 
-        mode="linear", 
-        scale=0.1,
-        min_activation_threshold=0.02,
-        save_every_x_steps=2, 
-        verbose=False, 
-        print_vals=True, 
-        
-        PP_information=None,
-        old_results=None, 
+        PRUNING_CIRCUIT:dict=None, 
+        subfolder:str=None, 
+        scale:float=1,
+        min_activation_threshold:float=0.02,
+        resid_scale:float=2,
 
-        save_img=False, 
-        show_img=False, 
-        resid_scale=1.5
+        save_every_x_steps:int=2, 
+        verbose:bool=False, 
+        print_vals:bool=True, 
+        
+        PP_information:dict=None,
+        old_results:dict=None, 
+
+        save_img:bool=False, 
+        show_img:bool=True, 
         ):
         
         """
@@ -609,9 +593,6 @@ class PathPatching(TaskInterface):
             # get senders
             senders = self.get_important_heads_distance_variance_threshold(
                 metric_diff_no_nan, 
-                k=k,
-                alpha=alpha, 
-                mode=mode, 
                 scale=resid_scale, 
                 min_activation_threshold=min_activation_threshold, 
                 verbose=verbose
@@ -629,7 +610,7 @@ class PathPatching(TaskInterface):
                     "resid_post",
                     (self._model.cfg.n_layers-1, None), 
                     senders=senders, 
-                    print_vals=print_vals,
+                    print_scores=print_vals,
                     save_img=save_img, 
                     show_img=show_img
                     )   
@@ -728,7 +709,7 @@ class PathPatching(TaskInterface):
                     if grouped_receiver_head[1] < 0 or grouped_receiver_head[1] >=  self._model.cfg.n_key_value_heads:
                         raise Exception("Something went wrong trying to map the q-heads to the k-heads. Remeber for Grouped Query Attention models like Qwen mutiple query heads are mapped to some k- or v heads")
                     
-                    # patchto receiver
+                    # patch to receiver
                     metric_diff = self.get_path_patch_head_to_heads(
                         receiver_input=receiver_name,
                         receiver_heads=[grouped_receiver_head],
@@ -741,9 +722,6 @@ class PathPatching(TaskInterface):
                     # get senders     
                     senders = self.get_important_heads_distance_variance_threshold(
                         metric_diff_no_nan,
-                        k=k,
-                        alpha=alpha, 
-                        mode=mode, 
                         scale=scale, 
                         min_activation_threshold=min_activation_threshold,
                         verbose=verbose
@@ -761,7 +739,7 @@ class PathPatching(TaskInterface):
                                 receiver_name, 
                                 grouped_receiver_head, 
                                 senders=senders, 
-                                print_vals=print_vals, 
+                                print_scores=print_vals, 
                                 save_img=save_img, 
                                 show_img=show_img
                                 ) 
@@ -782,9 +760,6 @@ class PathPatching(TaskInterface):
                     # get senders
                     senders = self.get_important_heads_distance_variance_threshold(
                         metric_diff_no_nan,
-                        k=k,
-                        alpha=alpha, 
-                        mode=mode, 
                         scale=scale, 
                         min_activation_threshold=min_activation_threshold,
                         verbose=verbose
@@ -801,7 +776,7 @@ class PathPatching(TaskInterface):
                             receiver_name, 
                             receiver_head, 
                             senders=senders, 
-                            print_vals=print_vals, 
+                            print_scores=print_vals, 
                             save_img=save_img, 
                             show_img=show_img
                             ) 
@@ -817,233 +792,13 @@ class PathPatching(TaskInterface):
         
         return CIRCUIT
     
-           
-    def patch_whole_graph_in_groups(
-        self, 
-        attn_only=True, 
-        save_steps=False, 
-        subfolder=None, 
-        alpha=0.3, 
-        mode="linear", 
-        scale=0.1, 
-        verbose=False, 
-        print_vals=True, 
-        save_every_x_steps=2, 
-        PP_information=None,
-        old_results=None
-        ):
-        
-        
-        """
-        path path through the whole model by using group of nodes
-        Repeat while there are still unseen receiver nodes:
-            1.) Patch to one receiver node (at beginneing this is resid post) from sender components (z or mlp_out) from previous layers
-            2.) Find important (significant influence on metric) sender heads 
-            3.) z component directly influenced by qkv and mlp_out by mlp_pre. Define qkv/mlp_pre component of important heads as temporal receivers
-            4.) path path to temporal receivers from z/mlp_out components of previous layers
-            5.) Define important sender to temporal receivers as new receivers
-         """
-
-        start_time = time.time() 
-        if PP_information is not None:
-            CIRCUIT, receivers, visited_heads, in_receivers = PP_information.values()
-        else:
-            CIRCUIT={}     
-            receivers, visited_heads, in_receivers = [], [], []
-        
-        if old_results is not None:
-            if len(old_results[0].values()) == 3:
-                FLOP_counter_old, n_foward_passes_old, comp_time_old = old_results[0].values()
-            else: 
-                FLOP_counter_old, n_foward_passes_old, comp_time_old, _, _ = old_results[0].values()
-
-            self.FLOP_counter += FLOP_counter_old
-            self.n_forward_passes += n_foward_passes_old
-            self.elapsed_time += comp_time_old
-                    
-        idx = 0
-        
-        if len(receivers) == 0: 
-            # TODO: exclude write operation from elapsed time
-            metric_diff = self.get_path_patch_head_to_final_resid_post(
-                    corrupted_cache=self.corrupted_cache, 
-                    clean_cache=self.clean_cache
-                    ).cpu()
-            
-            senders = self.get_important_heads_distance_variance_threshold(metric_diff, alpha=alpha, mode=mode, scale=scale)
-            
-            if save_steps:
-                self.heatmap_img(
-                    metric_diff, 
-                    subfolder = subfolder + "/heatmap", 
-                    receiver = "resid_post", 
-                    receiver_head = (self._model.cfg.n_layers-1, None), 
-                    senders=senders, 
-                    print_vals=print_vals)   
-
-            # group the metric
-            pos_senders, neg_senders = [], []
-            for r in senders:
-                if metric_diff[r] > 0:
-                    pos_senders.append(r)
-                else:
-                    neg_senders.append(r)
-            
-            receivers.append(pos_senders)
-            receivers.append(neg_senders)
-            in_receivers.extend(senders)
-            
-            if verbose:
-                print("in receivers", in_receivers)
-            
-            self.save_edge(
-                metric_diff = metric_diff,
-                receiver_head = (self._model.cfg.n_layers-1, None), 
-                receiver="resid_post",
-                sender_heads = senders,
-                )            
-    
-                
-        while len(receivers) > 0:
-            idx += 1     
-
-            if idx % save_every_x_steps == 0:
-                PP_information = {"CIRCUIT": CIRCUIT, "receivers":receivers, "visited_heads":visited_heads, "in_receivers":in_receivers}                
-                self.save_PP_information(PP_information=PP_information, subfolder=subfolder, name="intermediate.pkl")
-                end_time = time.time()  
-                self.elapsed_time += end_time - start_time
-
-                results = {
-                    "GFLOP":[self.FLOP_counter],
-                    "n_forward_passes":[self.n_forward_passes], 
-                    "comp_time": [self.elapsed_time]
-                }
-                
-                results = pd.DataFrame(data=results)                
-                store_df(results, subfolder, "results.json")
-                
-                
-            receiver_heads = receivers.pop(0)
-            if len(receiver_heads) == 0:
-                continue
-            if  receiver_heads in visited_heads: 
-                continue
-            
-            if verbose:
-                print(f"######## receiver heads {receiver_heads}")
-
-            # TODO: compare for heads and not for lists
-            visited_heads.extend(receiver_heads)
-            
-            if verbose:
-                print("visited heads", visited_heads)
-                        
-            for receiver_name in "qkv":
-                if verbose:
-                   print("receiver name", receiver_name)
-                   
-                metric_diff = self.get_path_patch_head_to_heads(
-                    receiver_input=receiver_name,
-                    receiver_heads=receiver_heads,
-                    corrupted_cache=self.corrupted_cache, 
-                    clean_cache=self.clean_cache
-                    ).cpu()
-                
-                
-              
-                # these attention heads have an significant influence on the output  -> all z-component
-                senders = self.get_important_heads_distance_variance_threshold(metric_diff, alpha=alpha, mode=mode, scale=scale)
-                
-                if len(senders) > 0:
-                    if save_steps:
-                        self.heatmap_img(
-                            metric_diff,
-                            subfolder + "/heatmap", 
-                            receiver_name, 
-                            receiver_heads, 
-                            senders=senders, 
-                            print_vals=print_vals
-                            )   
-
-                # group the metric
-                pos_senders, neg_senders = [], []
-                
-                for s in senders:
-                    if metric_diff[s] > 0:
-                        pos_senders.append(s)
-                    else:
-                        neg_senders.append(s)
-                        
-                if verbose:
-                    print("in receivers", in_receivers)
-
-                for r in receiver_heads:
-                    self.save_edge(
-                        metric_diff = metric_diff,
-                        receiver_head = r, 
-                        receiver=receiver_name,
-                        sender_heads = senders,
-                        )
-                    try:
-                        if not r[1] in CIRCUIT[r[0]]:
-                            CIRCUIT[r[0]].append(r[1])
-                    except:
-                        CIRCUIT[r[0]] = [r[1]]
-            
-                    
-                if len(pos_senders) > 0:
-                    if verbose:
-                        print("pos senders",pos_senders)
-                        
-                    filterted_heads = [head for head in pos_senders if head not in visited_heads and head not in in_receivers]
-                    if len(filterted_heads) > 0:
-                        if verbose:
-                            print("filtered", filterted_heads)
-                        receivers.append(filterted_heads)
-                        in_receivers.extend(filterted_heads)
-                    
-                if len(neg_senders) > 0 and not neg_senders in visited_heads:
-                    if verbose:
-                        print("neg senders", neg_senders)
-                    
-                    filterted_heads = [head for head in neg_senders if head not in visited_heads and head not in in_receivers]
-                    
-                    if len(filterted_heads) > 0:         
-                        if verbose:
-                            print("filtered", filterted_heads)
-                            
-                        receivers.append(filterted_heads)
-                        in_receivers.extend(filterted_heads)
-            
-            for r in receiver_heads:
-                in_receivers.remove(r)
-            if verbose:
-                print("in receivers", in_receivers)
-                
-        end_time = time.time()  
-        self.elapsed_time += end_time - start_time
-        return CIRCUIT
-    
-
     #----------------------------------------------------------------------------------------------------
     #                   Finding Sender Heads
     #----------------------------------------------------------------------------------------------------
      
-    def get_important_heads_variance_threshold(self, metric_diff:Float[Tensor, "layer head"]) -> List:
-        mean_activation = t.mean(metric_diff)
-        sd_activation = t.std(metric_diff)
-        new_heads = []
-        
-        for layer in range(len(metric_diff)):
-            for head in range(len(metric_diff[layer])):
-                if t.abs(metric_diff[layer][head]) - t.abs(mean_activation) > 2 * t.abs(sd_activation):
-                    new_heads.append( (layer, head))
-        return new_heads
-    
     def get_important_heads_distance_variance_threshold(
         self, 
         metric_diff:Float[Tensor, "layer head"], 
-        k=1, 
         alpha=0.1, 
         mode="linear", 
         scale=2, 
@@ -1077,7 +832,7 @@ class PathPatching(TaskInterface):
             elif mode == "sqrt":
                 # scale threshold
                 n =  metric_diff[:layer + 1, :][~t.isnan(metric_diff[:layer + 1, :])].numel() # count all not ablated heads fpf previous layers
-                base_threshold =   (scale + k / np.sqrt(n))
+                base_threshold =   (scale + 2 / np.sqrt(n))
             else:
                 base_threshold = scale
             
@@ -1118,7 +873,7 @@ class PathPatching(TaskInterface):
     #                   Plotting and Saving
     #----------------------------------------------------------------------------------------------------
 
-    def heatmap_img(self, metric_diff, subfolder, receiver, receiver_head, senders=[], print_vals=True, show_img=False, save_img=False):
+    def heatmap_img(self, metric_diff, subfolder, receiver, receiver_head, senders=[], print_scores=True, show_img=False, save_img=False):
         
         if receiver == "resid_post":
             title = f"receiver: resid_post at layer {receiver_head[0]}"
@@ -1134,7 +889,7 @@ class PathPatching(TaskInterface):
             title = f"receiver: attn_head_component {receiver} at {receiver_head}"
             name = f"att_head_{receiver_head}_{receiver}"
         
-        heat_map_layer_head(
+        heat_map_path_patching(
             metric_diff, 
             title = title, 
             color_axis_title = self.metric_name, 
@@ -1143,7 +898,7 @@ class PathPatching(TaskInterface):
             subfolder=subfolder, 
             name= name,
             senders=senders,
-            print_vals=print_vals)
+            print_scores=print_scores)
    
    
     def save_edge(

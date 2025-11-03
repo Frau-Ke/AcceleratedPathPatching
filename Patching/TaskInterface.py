@@ -4,7 +4,7 @@ from transformer_lens import utils, HookedTransformer, ActivationCache
 from transformer_lens.HookedTransformerConfig import HookedTransformerConfig
 import torch as t
 import torch.nn.functional as F
-from utils.PatchingMetric import *
+from utils.metrics import *
 import os
 from functools import partial
 import pickle as pkl
