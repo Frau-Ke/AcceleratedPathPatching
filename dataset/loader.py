@@ -19,7 +19,7 @@ def load_dataset(
     remove_target_token=False
     ) :
 
-    if task == "ioi":
+    if task == "IOI":
         dataset = IOI_dataset(
             model_name=model_name,
             N=N,
@@ -39,7 +39,7 @@ def load_dataset(
             #TODO: add seed!
             )
         
-    elif task == "induction":
+    elif task == "Induction":
         dataset = NameInduction(
             model_name=model_name,
             N=N,
@@ -91,13 +91,10 @@ def load_dataset(
         )
         
     else:
-        raise Exception(f"Requested Task {task} is not implemented. \n Choose one of [ioi, induction, GreaterThan, GenderedPronoun, Docstring]")
+        raise Exception(f"Requested Task {task} is not implemented. \n Choose one of [IOI, Induction, GreaterThan, GenderedPronoun, Docstring]")
     
     return dataset
 
-
-
- 
 def get_dataloader(dataset, batch_size=32, shuffle=True):
     return DataLoader(
         dataset,

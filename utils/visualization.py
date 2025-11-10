@@ -18,7 +18,7 @@ import pandas as pd
 from matplotlib.ticker import MaxNLocator
 
 title_font=16
-fontsize=14
+fontsize=10
 labelsize=12
 cbar_fontsize=10
 val_size=9
@@ -36,8 +36,8 @@ def heat_map_path_patching(
     name: str = "",
     subfolder: str = "",
     senders: list = [], 
-    print_scores=True, 
-):
+    print_scores=True
+    ):
     """Heatmap (Layer x Heads) for Path Patching. Each score is the variation on the metric, if the associated head 
     is patched
 
@@ -198,10 +198,10 @@ def heat_map_pruning(
     Returns:
         _type_: _description_
     """    
+    n_layers, n_heads = scores.shape
     legend_anchor_y = 1 + (1 / n_layers)
     legend_anchor_x = -0.5
     
-    n_layers, n_heads = scores.shape
     fig, ax = plt.subplots()
 
     # plot
@@ -359,21 +359,21 @@ def choose_metric_sparsity_plot_function(
     cliff_value1,  
     df2:pd.DataFrame=None,
     cliff_value2=None,
-    y_metric1:str="Performance", 
+    y_metric1:str="performance", 
     y_metric2:str=None, 
     title="", 
     p1=None, 
     p2=None
-):
+    ):
     if df2 is None:
         if y_metric2 is None:
-            one_curve_one_metric_sparsity(
+            fig = one_curve_one_metric_sparsity(
                 df=df1, 
                 cliff_value=cliff_value1, 
                 y_metric=y_metric1, 
                 title=title)
         else:
-            one_curve_multiple_metrics_sparsity(
+            fig = one_curve_multiple_metrics_sparsity(
                 df=df1, 
                 cliff_value=cliff_value1, 
                 y_metric1=y_metric1,
@@ -381,7 +381,7 @@ def choose_metric_sparsity_plot_function(
             )
     else:
         if y_metric2 is None:
-            two_curves_one_metric_sparsity(
+            fig = two_curves_one_metric_sparsity(
                 df1=df1, 
                 df2=df2, 
                 cliff_value1=cliff_value1, 
@@ -390,7 +390,7 @@ def choose_metric_sparsity_plot_function(
                 title=title
             )
         else:
-            two_curves_multiple_metrics_sparsity(
+            fig = two_curves_multiple_metrics_sparsity(
                 df1=df1, 
                 df2=df2, 
                 cliff_value1=cliff_value1, 
@@ -402,6 +402,7 @@ def choose_metric_sparsity_plot_function(
                 p2=p2
             )
 
+    return fig
             
 def one_curve_one_metric_sparsity(
     df:pd.DataFrame, 
@@ -447,6 +448,8 @@ def one_curve_one_metric_sparsity(
     plt.xticks(rotation=0,  fontsize=axis_label_size)
     plt.yticks(rotation=0,  fontsize=axis_label_size)
     ax.set_title(title)
+    
+    return fig
        
        
 def one_curve_multiple_metrics_sparsity(
@@ -602,6 +605,7 @@ def two_curves_multiple_metrics_sparsity(
     curve1_sparsities = df1["sparsity_ratio"]
     curve2_sparsities = df2["sparsity_ratio"]
 
+    print(df1)
     curve1_metric1 = df1[y_metric1] # usually performance
     curve1_metric2 = df1[y_metric2] # usually TPR
     curve2_metric1 = df2[y_metric1] # usually performance
@@ -612,16 +616,16 @@ def two_curves_multiple_metrics_sparsity(
     fig.subplots_adjust(hspace=0.05)
 
     col2 = "#348246"
-    col_p1 = "#00e20f"
+    col_p2 = "#00e20f"
     col1 = "#8172b3"
-    col_p2="#dd48fb"
+    col_p1="#dd48fb"
 
-    
     ax1.plot(curve1_sparsities, curve1_metric1,'o-', color=col1)
     ax2.plot(curve1_sparsities,  curve1_metric2, 's-', color=col1,)
     
-    ax1.plot(curve2_sparsities, y_metric2, 'o-', color=col2)
-    ax2.plot(curve2_sparsities, curve2_metric2, 's-', color=col2)
+    ax1.plot(curve1_sparsities, curve1_metric2, 'o-', color=col2)
+    ax2.plot(curve1_sparsities, curve2_metric2, 's-', color=col2)
+    print(curve1_metric2)
     
     ax1.set_ylim(min(min(curve1_metric1), min(curve2_metric1)), max(max(curve1_metric1), max(curve2_metric1)))
     ax2.set_ylim(min(min(curve1_metric2), min(curve2_metric2)) - 2, max(max(curve1_metric2), max(curve2_metric2)) + 2)  
@@ -687,8 +691,6 @@ def two_curves_multiple_metrics_sparsity(
     ax2.tick_params(axis='x', rotation=0, labelsize=fontsize)
     ax2.tick_params(axis='y', rotation=0, labelsize=fontsize)
     ax1.set_title(title, fontsize=title_font)
-
-    return fig
 
     return fig
 

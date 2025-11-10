@@ -27,12 +27,10 @@ gc.collect()
 t.cuda.empty_cache()
 t.autograd.set_grad_enabled(False)
 
-def automated_PP(args,
-                 scales = [1.5, 2.0, 2.5],
-                 min_activation_thresholds=[0.02, 0.05, 0.002, 0.005] , 
-                 resid_scale=2
-                 ):
-    
+def automated_PP(
+    args,
+    resid_importance_threshold=2
+):
     
     if args.pruning_circuit == "none":    
         PRUNING_CIRCUIT = None
@@ -42,8 +40,6 @@ def automated_PP(args,
         PRUNING_CIRCUIT = choose_contrastive_FLAP_circuit(args.task, args.model_name)
     else:
         PRUNING_CIRCUIT = choose_vanilla_FLAP_circuit(args.task, args.model_name)
-
-    
     
     pp = PathPatching(
         model_name=args.model_name, 
@@ -57,103 +53,97 @@ def automated_PP(args,
         calc_FLOPS=args.calc_FLOPS
     )
 
-    for s in scales:
-        for min_acts in min_activation_thresholds:
-            
-            # ---- set values for next iteration -----
-            pp.reset_efficency_metrics()
-            args.min_activation_threshold = min_acts
-            args.scale = s
-
-            # ----- create folder structure -----
-            if args.pruning_circuit == "none":    
-                result_folder = f"{args.model_name}/{args.task}/{args.patching_method}/automatic/min_threshold-{args.min_activation_threshold}/scale-{args.scale}"
-            else:
-                result_folder = f"{args.model_name}/{args.task}/APP_{args.pruning_circuit}/min_threshold-{args.min_activation_threshold}/scale-{args.scale}"
+    pp.reset_efficency_metrics()
+    
+    # ----- create folder structure -----
+    if args.pruning_circuit == "none":    
+        result_folder = f"{args.model_name}/{args.task}/{args.patching_method}/automatic/min_threshold-{args.min_value_threshold}/scale-{args.importance_threshold}"
+    else:
+        result_folder = f"{args.model_name}/{args.task}/APP_{args.pruning_circuit}/min_threshold-{args.min_value_threshold}/scale-{args.importance_threshold}"
 
 
-            if args.out_path == "":
-                subfolder = result_folder
-            else:
-                subfolder = os.path.join(args.out_path, result_folder)
+    if args.out_path == "":
+        subfolder = result_folder
+    else:
+        subfolder = os.path.join(args.out_path, result_folder)
+        
+    print("result", result_folder)
+    if not os.path.isdir(subfolder):
+        create_folder(subfolder)
+
+    # ------ load intermediate results, if available and requested -------
+    if args.use_old_input:
+        try:
+            with open(os.path.join(subfolder, "intermediate.pkl"), "rb") as f:
+                PP_information = pickle.load(f)
+            with open(os.path.join(subfolder, "results.json"), "r") as f:
+                old_results = json.load(f)
+        except:
+            raise(f"No intermediate results at {subfolder}. Either point to correct position of intermediate results or set \"use_old_input=False\".")
+
+    else:
+        PP_information = None
+        old_results = None
+
+    if pp._model.cfg.n_heads * pp._model.cfg.n_layers >= 150:
+        print_vals = True
+    else:
+        print_vals=True
+
+    # ------ run automated path patching ------
                 
-            print("result", result_folder)
-            if not os.path.isdir(subfolder):
-                create_folder(subfolder)
-
-            # ------ load intermediate results, if available and requested -------
-            if args.use_old_input:
-                try:
-                    with open(os.path.join(subfolder, "intermediate.pkl"), "rb") as f:
-                        PP_information = pickle.load(f)
-                    with open(os.path.join(subfolder, "results.json"), "r") as f:
-                        old_results = json.load(f)
-                except:
-                    raise(f"No intermediate results at {subfolder}. Either point to correct position of intermediate results or set \"use_old_input=False\".")
-
-            else:
-                PP_information = None
-                old_results = None
-
-            if pp._model.cfg.n_heads * pp._model.cfg.n_layers >= 150:
-                print_vals = True
-            else:
-                print_vals=True
-
-            # ------ run automated path patching ------
-                        
-            if "Qwen" in args.model_name:
-                CIRCUIT = pp.patch_whole_graph_qwen(
-                    PRUNING_CIRCUIT=PRUNING_CIRCUIT,
-                    subfolder=subfolder,
-                    scale=args.scale, 
-                    min_activation_threshold=args.min_activation_threshold,
-                    save_every_x_steps=args.save_every_x_steps, 
-                    resid_scale = resid_scale,
-                    
-                    verbose=args.verbose,
-                    print_vals=print_vals,
-                
-                    PP_information=PP_information, 
-                    old_results= old_results,
-                    
-                    save_img=args.save_img, 
-                    show_img = args.show, 
-                    )
-
-            else:
-                CIRCUIT = pp.patch_whole_graph(
-                    PRUNING_CIRCUIT=PRUNING_CIRCUIT,
-                    subfolder=subfolder,
-                    scale=args.scale, 
-                    min_activation_threshold=args.min_activation_threshold,
-                    save_every_x_steps=args.save_every_x_steps, 
-                    resid_scale= resid_scale, 
-                    
-                    verbose=args.verbose,
-                    print_vals=print_vals,
-                    
-                    PP_information=PP_information, 
-                    old_results= old_results,
-                    
-                    save_img=args.save_img, 
-                    show_img = args.show, 
-                    )
-
+    if "Qwen" in args.model_name:
+        CIRCUIT = pp.patch_whole_graph_qwen(
+            PRUNING_CIRCUIT=PRUNING_CIRCUIT,
+            subfolder=subfolder,
+            importance_threshold=args.importance_threshold, 
+            min_value_threshold=args.min_value_threshold,
+            save_every_x_steps=args.save_every_x_steps, 
+            resid_importance_threshold = resid_importance_threshold,
             
-            results = {
-                "GFLOP":[pp.FLOP_counter],
-                "n_forward_passes":[pp.n_forward_passes], 
-                "comp_time": [pp.elapsed_time],
-                "size_circuit": [circuit_size(CIRCUIT)],
-            }
+            verbose=args.verbose,
+            print_vals=print_vals,
+        
+            PP_information=PP_information, 
+            old_results= old_results,
+            
+            save_img=args.save_img, 
+            show_img = args.show, 
+            )
 
-            results = pd.DataFrame(data=results)
+    else:
+        CIRCUIT = pp.patch_whole_graph(
+            PRUNING_CIRCUIT=PRUNING_CIRCUIT,
+            subfolder=subfolder,
+            importance_threshold=args.importance_threshold, 
+            min_value_threshold=args.min_value_threshold,
+            save_every_x_steps=args.save_every_x_steps, 
+            resid_importance_threshold= resid_importance_threshold, 
+            
+            verbose=args.verbose,
+            print_vals=print_vals,
+            
+            PP_information=PP_information, 
+            old_results= old_results,
+            
+            save_img=args.save_img, 
+            show_img = args.show, 
+            )
 
-            if args.save_text:
-                save_circuit(CIRCUIT, subfolder, "circuit.txt")
-                save_parser_information(args, subfolder, "parser_information.txt")
-                store_df(results, subfolder, "results.json")
+    
+    results = {
+        "GFLOP":[pp.FLOP_counter],
+        "n_forward_passes":[pp.n_forward_passes], 
+        "comp_time": [pp.elapsed_time],
+        "size_circuit": [circuit_size(CIRCUIT)],
+    }
+
+    results = pd.DataFrame(data=results)
+
+    if args.save_text:
+        save_circuit(CIRCUIT, subfolder, "circuit.txt")
+        save_parser_information(args, subfolder, "parser_information.txt")
+        store_df(results, subfolder, "results.json")
             
     return CIRCUIT
 
@@ -162,15 +152,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     set_PATH(args.out_path)
     print(args)
-        
-    min_activation_thresholds = [0.01, 0.001, 0.02, 0.002]
-    scales=[2.5, 2, 1.5, 1]
-
-    print("min activation threshold", min_activation_thresholds)
-    print("scale", scales)
+    
     _ = automated_PP(     
-        args=args,
-        scales = scales,
-        min_activation_thresholds=min_activation_thresholds, 
-        resid_scale=2
+        args=args
     )

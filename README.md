@@ -77,7 +77,7 @@ Arguments:
     --model_name=gpt2 \
     --task=IOI \
     --contrastive_FLAP \
-    --cliff_type=first \
+    --cliff_point=first \
     --highest_sparsity=99 \
     --lowest_sparsity=60 \ 
     --step_size=1 \
@@ -91,7 +91,7 @@ Arguments:
 - `model_name`: Identifier of the model to download the model via `HookedTransformer.from_pretrained` or `AutoModelForCausalLM.from_pretrained` from the Huggingface hub.
 - `task`: Identifier of a natural language task. Implemented tasks are `IOI`, `GreaterThan`, `Induction`, `GenderedPronouns`, `Docstring`.
 - `contrastive_FLAP`: If true, run contrastive FLAP instead of regular FLAP. For contrastive FLAP the pruning scores are the difference between between pruning scores obtained under the clean and corrupted input. 
-- `cliff_type`: Three cliff point calculations are supported [`first`, `biggest`, `fixed`]. Cliff points are identified by observing drops in the performance curve. 
+- `cliff_point`: Three cliff point calculations are supported [`first`, `biggest`, `fixed`]. Cliff points are identified by observing drops in the performance curve. 
 - `highest_sparsity`: max sparsity under which performance is evaluated. Default is 99.
 - `lowest_sparsity`: min sparsity under which performance is evaluated. Default is 60.
 - `step_size`: Step size to get from the lowest to the highest sparsity. Default is 1.

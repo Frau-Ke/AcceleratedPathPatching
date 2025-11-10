@@ -65,7 +65,7 @@ add_args(
     default="path",
     choices=["activation", "path"])
 
-# Automated Path Patching0
+# Automated Path Patching
 add_args("--importance_threshold", default=2, type=float, help="scale * STD is importance threshold")
 add_args("--use_old_input", action="store_true", help="If true, intermediate results from previos runs are used and run is continued")
 add_args("--save_every_x_steps", default=5, type=int, help="store intermediate result every x steps")

@@ -54,18 +54,18 @@ adaptive:
 
 ############ New Parser Arguments ##############################
 parser.add_argument("--use_mlp", action="store_true", help="prune MLPs")
-parser.add_argument("--task", type=str, default="wikitext2", help="dataset to run pruning on", choices=["ioi", "induction", "GreaterThan", "GenderedPronouns", "Docstring"])
+parser.add_argument("--task", type=str, default="IOI", help="dataset to run pruning on", choices=["IOI", "Induction", "GreaterThan", "GenderedPronouns", "Docstring"])
 parser.add_argument("--device", type=str, default="cpu", help="device to run pruning on")
 parser.add_argument("--out_path", type=str, default=os.getcwd(),help="path to results")
 parser.add_argument("--prepend_bos", action="store_true", help="append bos token at the beginning")
 parser.add_argument("--difference_with", type=str, default="None", choices=["None", "corrupted", "baseline"], help="what kind activations to substract from the clean activations")
-parser.add_argument("--save_img", action="store_true", help="save created images, if true")
+parser.add_argument("--save_image", action="store_true", help="save created images, if true")
 parser.add_argument("--save_txt", action="store_true", help="store text results, if true")
 parser.add_argument("--show", action="store_true", help="show created images, if true")
 parser.add_argument("--verbose", action="store_true", help="if true, print debug information")
 parser.add_argument("--calc_FLOP", action="store_true", help="if true, calculate FLOPs")
 
-parser.add_argument("--cliff_type", type=str, help="how the cliff will be calculated", choices=["first", "smooth_first", "biggest"])
+parser.add_argument("--cliff_point", type=str, help="how the cliff will be calculated", choices=["first", "smooth_first", "biggest"])
 parser.add_argument("--lowest_sparsity", type=int, default=60, help="min sparsity")
-parser.add_argument("--highest_sparsity", type=int, default=90, help="max sparsity")
+parser.add_argument("--highest_sparsity", type=int, default=99, help="max sparsity")
 parser.add_argument("--step_size", type=int, default=1, help="step size")

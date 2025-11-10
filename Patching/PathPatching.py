@@ -318,9 +318,9 @@ class PathPatching(TaskInterface):
         self,        
         PRUNING_CIRCUIT:dict=None, 
         subfolder:str=None, 
-        scale:float=1,
-        min_activation_threshold:float=0.02,
-        resid_scale:float=2,
+        importance_threshold:float=1,
+        min_value_threshold:float=0.02,
+        resid_importance_threshold:float=2,
 
         save_every_x_steps:int=2, 
         verbose:bool=False, 
@@ -379,8 +379,8 @@ class PathPatching(TaskInterface):
             
             senders = self.get_important_heads_distance_variance_threshold(
                 metric_diff_no_nan,  
-                scale=resid_scale, 
-                min_activation_threshold=min_activation_threshold, 
+                importance_threshold=resid_importance_threshold, 
+                min_value_threshold=min_value_threshold, 
                 verbose=verbose
                 )
             if PRUNING_CIRCUIT is not None:
@@ -487,8 +487,8 @@ class PathPatching(TaskInterface):
                 # these attention heads have an significant influence on the output  -> all z-component
                 senders = self.get_important_heads_distance_variance_threshold(
                     metric_diff_no_nan,
-                    scale=scale, 
-                    min_activation_threshold=min_activation_threshold,
+                    importance_threshold=importance_threshold, 
+                    min_value_threshold=min_value_threshold,
                     verbose=verbose
                     )
                 
@@ -525,9 +525,9 @@ class PathPatching(TaskInterface):
         self,        
         PRUNING_CIRCUIT:dict=None, 
         subfolder:str=None, 
-        scale:float=1,
-        min_activation_threshold:float=0.02,
-        resid_scale:float=2,
+        importance_threshold:float=1,
+        min_value_threshold:float=0.02,
+        resid_importance_threshold:float=2,
 
         save_every_x_steps:int=2, 
         verbose:bool=False, 
@@ -593,8 +593,8 @@ class PathPatching(TaskInterface):
             # get senders
             senders = self.get_important_heads_distance_variance_threshold(
                 metric_diff_no_nan, 
-                scale=resid_scale, 
-                min_activation_threshold=min_activation_threshold, 
+                importance_threshold=resid_importance_threshold, 
+                min_value_threshold=min_value_threshold, 
                 verbose=verbose
                 )
             if PRUNING_CIRCUIT is not None:
@@ -722,8 +722,8 @@ class PathPatching(TaskInterface):
                     # get senders     
                     senders = self.get_important_heads_distance_variance_threshold(
                         metric_diff_no_nan,
-                        scale=scale, 
-                        min_activation_threshold=min_activation_threshold,
+                        importance_threshold=importance_threshold, 
+                        min_value_threshold=min_value_threshold,
                         verbose=verbose
                         )
                                         
@@ -760,8 +760,8 @@ class PathPatching(TaskInterface):
                     # get senders
                     senders = self.get_important_heads_distance_variance_threshold(
                         metric_diff_no_nan,
-                        scale=scale, 
-                        min_activation_threshold=min_activation_threshold,
+                        importance_threshold=importance_threshold, 
+                        min_value_threshold=min_value_threshold,
                         verbose=verbose
                         )                    
                     
@@ -801,8 +801,8 @@ class PathPatching(TaskInterface):
         metric_diff:Float[Tensor, "layer head"], 
         alpha=0.1, 
         mode="linear", 
-        scale=2, 
-        min_activation_threshold=0.02,
+        importance_threshold=2, 
+        min_value_threshold=0.02,
         verbose=False
         ) -> List:
         
@@ -815,7 +815,7 @@ class PathPatching(TaskInterface):
         
         # maximum value threshold
         max_activation = t.max(t.abs(metric_diff[~t.isnan(metric_diff)]))
-        if max_activation <= min_activation_threshold:
+        if max_activation <= min_value_threshold:
             if verbose:
                 print("max activation is really small:", max_activation)
             return []
@@ -824,17 +824,17 @@ class PathPatching(TaskInterface):
             distance = abs((layer + 1) - target_layer)
             
             if mode=="linear":
-                base_threshold = scale + alpha * distance
+                base_threshold = importance_threshold + alpha * distance
             elif mode=="exp":
-                base_threshold = scale * t.exp(t.tensor(alpha * distance))
+                base_threshold = importance_threshold * t.exp(t.tensor(alpha * distance))
             elif mode=="log":
-                base_threshold = scale * (1 + alpha * t.log(t.tensor(distance)))
+                base_threshold = importance_threshold * (1 + alpha * t.log(t.tensor(distance)))
             elif mode == "sqrt":
-                # scale threshold
+                # importance_threshold
                 n =  metric_diff[:layer + 1, :][~t.isnan(metric_diff[:layer + 1, :])].numel() # count all not ablated heads fpf previous layers
-                base_threshold =   (scale + 2 / np.sqrt(n))
+                base_threshold =   (importance_threshold + 2 / np.sqrt(n))
             else:
-                base_threshold = scale
+                base_threshold = importance_threshold
             
             threshold = base_threshold *  t.abs(sd_activation)
             

@@ -91,7 +91,7 @@ def init_metric_and_cache_average(
     
     ### Average Logits Difference
     if metric_name == "logits_diff":
-        assert task in ["ioi", "induction", "GreaterThan", "GenderedPronouns", "Docstring"], "Logits difference metric can only be used with the tasks ioi, docstring or greaterThan"
+        assert task in ["IOI", "Induction", "GreaterThan", "GenderedPronouns", "Docstring"], "Logits difference metric can only be used with the tasks ioi, docstring or greaterThan"
 
         clean_distribution_average = ave_logit_diff(
             clean_logits, 
