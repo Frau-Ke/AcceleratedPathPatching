@@ -78,6 +78,7 @@ def load_circuit(out_path, name):
 
 
 def save_img(fig, out_path, name):
+    print("saving image")
     create_folder(out_path)
     file_path =  os.path.join(out_path, name)
     fig.savefig(file_path, bbox_inches='tight')

@@ -35,12 +35,13 @@ def automated_PP(
     if args.pruning_circuit == "none":    
         PRUNING_CIRCUIT = None
     elif args.pruning_circuit == "hybrid": 
-        PRUNING_CIRCUIT = choose_hybrid_FLAP_circuit()#args.task, args.model_name)
+        print("choosing circuits")
+        PRUNING_CIRCUIT = choose_hybrid_FLAP_circuit(args.task, args.model_name)
     elif args.pruning_circuit == "contrastive": 
         PRUNING_CIRCUIT = choose_contrastive_FLAP_circuit(args.task, args.model_name)
     else:
         PRUNING_CIRCUIT = choose_vanilla_FLAP_circuit(args.task, args.model_name)
-    
+
     pp = PathPatching(
         model_name=args.model_name, 
         task=args.task, 
@@ -50,16 +51,19 @@ def automated_PP(
         device=args.device, 
         patch_mlp=args.patch_mlp,
         seed=args.seed, 
-        calc_FLOPS=args.calc_FLOPS
+        calc_FLOPS=args.calc_FLOPS, 
+        cache_dir=args.cache_dir
     )
 
     pp.reset_efficency_metrics()
     
     # ----- create folder structure -----
     if args.pruning_circuit == "none":    
-        result_folder = f"{args.model_name}/{args.task}/{args.patching_method}/automatic/min_threshold-{args.min_value_threshold}/scale-{args.importance_threshold}"
+        result_folder = f"{args.model_name}/{args.task}/{args.patching_method}/automatic/maxVal-{args.min_value_threshold}/importance-{args.importance_threshold}"
+    elif args.pruning_circuit == "hybrid":    
+        result_folder = f"{args.model_name}/{args.task}/APP/maxVal-{args.min_value_threshold}/importance-{args.importance_threshold}"
     else:
-        result_folder = f"{args.model_name}/{args.task}/APP_{args.pruning_circuit}/min_threshold-{args.min_value_threshold}/scale-{args.importance_threshold}"
+        result_folder = f"{args.model_name}/{args.task}/APP_{args.pruning_circuit}/maxVal-{args.min_value_threshold}/importance-{args.importance_threshold}"
 
 
     if args.out_path == "":
@@ -67,7 +71,7 @@ def automated_PP(
     else:
         subfolder = os.path.join(args.out_path, result_folder)
         
-    print("result", result_folder)
+    print("result", subfolder)
     if not os.path.isdir(subfolder):
         create_folder(subfolder)
 

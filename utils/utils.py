@@ -114,8 +114,6 @@ def activation_patterns(
 
     for layer_idx, layer in enumerate(layers):
         for head in heads[layer_idx]: 
-            print(attentions[layer].shape)
-
             attention_matrix = attentions[layer][0, head]  
 
             # mask the upper triangle
@@ -135,6 +133,7 @@ def activation_patterns(
                 head=(layer, head), 
                 x_label="Attended Token",
                 y_label="Current Token", 
+                print_vals=False,
                 title=title
                 )
             

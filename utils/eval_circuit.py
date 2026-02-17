@@ -13,7 +13,7 @@ from typing import List, Optional, Callable, Tuple, Dict, Literal, Set, Union
 import numpy as np
 import gc
 from dataset.loader import get_dataloader
-from utils.metrics import ave_logit_diff
+from utils.metrics import ave_logit_diff, accuracy
 from utils.circuit_functions import circuit_size, TPR, FPR, precision
 
 #----------------------------------------------------------------------------------------------------
@@ -259,19 +259,76 @@ def evaluate_circiut(
         )
     performance = performance_achieved(ave_logit_gt, ave_logit)   
     
+    acc = accuracy(
+            logits=logits.to(device), 
+            correct_answers=batch_dataset["correct_answers"].to(device), 
+            wrong_answers=batch_dataset["wrong_answers"].to(device), 
+            target_idx=target_idx.to(device),
+            )
+    
     # delete the permanent hooks
     model.reset_hooks(including_permanent=True)
-    return ave_logit, performance
+    return ave_logit, performance, acc
+
+def hook_model(
+    model, 
+    CIRCUIT:dict, 
+    dataset, 
+    epochs:int, 
+    batch_size:int,
+    ):
+    
+    dataloader = get_dataloader(dataset, batch_size=batch_size, shuffle=False)
+    model.reset_hooks(including_permanent=True)
+    device = model.cfg.device
+
+    try:
+        word_idx = dataset.word_idx
+    except:
+        word_idx = None
+
+    performances = np.zeros(epochs)
+    avg_logits = np.zeros(epochs)
+    
+    for i, batch_dataset in enumerate(dataloader):    
+        torch.cuda.empty_cache()
+        gc.collect()
+        groups = {}
+        
+        # restructured the groups to the batches, samples with the same template are in a group
+        # average over group is used to ablate
+        for dataset_idx, _ in batch_dataset["target_idx"]:
+            group_idx = next(i for i, arr in enumerate(dataset.groups) if dataset_idx in arr)
+            elem = dataset_idx.item() % batch_size
+            try:
+                groups[group_idx] = np.append(groups[group_idx], elem)
+            except:
+                groups[group_idx] = np.array([elem])
+                
+        groups = list(groups.values())
+        # Permanent hooks, that ablate heads not in circuit with the mean over the corrupted activations 
+        model = add_mean_ablation_hook(
+            model=model, 
+            corrupted_tokens=batch_dataset["corrupted_tokens"],
+            groups=groups,
+            word_idx=word_idx,
+            circuit=CIRCUIT
+            )
+    return model
+    
+    
+
 
 def batch_evaluate_circiut(
     model, 
     CIRCUIT:dict, 
     dataset, 
     ave_logit_gt:float, 
-    task="", 
+    epochs:int, 
+    batch_size:int,
+    task:str, 
     model_name="gpt2", 
-    epochs=4, 
-    batch_size=50
+    top_k=1
     )-> List:
     
     """Evaluate how a circuit performs, split the input in batches.
@@ -321,7 +378,6 @@ def batch_evaluate_circiut(
                 groups[group_idx] = np.array([elem])
                 
         groups = list(groups.values())
-
         # Permanent hooks, that ablate heads not in circuit with the mean over the corrupted activations 
         model = add_mean_ablation_hook(
             model=model, 
@@ -349,12 +405,19 @@ def batch_evaluate_circiut(
             )
         
         performance = performance_achieved(ave_logit_gt, ave_logit)   
-        
         performances[i] = performance
         avg_logits[i] = ave_logit
         
+        acc = accuracy(
+            logits=logits.to(device), 
+            correct_answers=batch_dataset["correct_answers"].to(device), 
+            wrong_answers=batch_dataset["wrong_answers"].to(device), 
+            target_idx=target_idx.to(device),
+            top_k=top_k
+            )
+        
         model.reset_hooks(including_permanent=True)
-    return np.mean(avg_logits), np.mean(performances)
+    return np.mean(avg_logits), np.mean(performances), acc
 
     
 def performance_achieved(ave_logit_gt:float, ave_logit:float) -> float:

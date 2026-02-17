@@ -19,13 +19,12 @@ def predict_target_token(model, dataset, tokenizer:AutoTokenizer, device:str="cu
     """
     
     if use_corrupted:
-        tokens = dataset.corrupted_tokens.to(device)
+        tokens = dataset.corrupted_tokens.to(device)[:n]
     else:
-        tokens = dataset.clean_tokens.to(device)
-        
+        tokens = dataset.clean_tokens.to(device)[:n]
     # Get the logits
     with torch.no_grad():
-        outputs = model(tokens[:n])
+        outputs = model(tokens)
     try:
         outputs = outputs.logits
     except:
@@ -41,7 +40,7 @@ def predict_target_token(model, dataset, tokenizer:AutoTokenizer, device:str="cu
         top_probs, top_indices = torch.topk(probs, 10)
         # Decode and print results
         print("Top 10 Predictions")
-        print("Prompt", j, ":",  "".join(tokenizer.decode(tokens[j])))#, starts[j]:target_idx+1])))
+        print("Prompt", j, ":",  "".join(tokenizer.decode(tokens[j, starts[j]:target_idx+1])))
         for i in range(10):
             token_id = top_indices[i].item()
             token_prob = top_probs[i].item()

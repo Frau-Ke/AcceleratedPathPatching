@@ -430,7 +430,6 @@ class PathPatching(TaskInterface):
 
             if idx % save_every_x_steps == 0:
                 end_time = time.time()  
-                #print("self elapsedt time before saving", self.elapsed_time)
                 self.elapsed_time += end_time - start_time
                 start_time=end_time
                     
@@ -461,7 +460,8 @@ class PathPatching(TaskInterface):
                 continue
             
             if receiver_head[0] == 0:
-                print("skipt zero layers", receiver_head)
+                if verbose:
+                    print("zero layers: done", receiver_head)
                 continue
 
             visited_heads.append(receiver_head)
@@ -800,7 +800,7 @@ class PathPatching(TaskInterface):
         self, 
         metric_diff:Float[Tensor, "layer head"], 
         alpha=0.1, 
-        mode="linear", 
+        mode="sqrt", 
         importance_threshold=2, 
         min_value_threshold=0.02,
         verbose=False

@@ -16,13 +16,30 @@ from cycler import cycler
 from utils.data_io import save_img, store_df
 import pandas as pd
 from matplotlib.ticker import MaxNLocator
+from matplotlib_set_diagrams import EulerDiagram
+from matplotlib_venn import venn2, venn2_circles
+import matplotlib.patches as Patch
+from matplotlib_venn.layout.venn2 import DefaultLayoutAlgorithm
 
-title_font=16
-fontsize=10
-labelsize=12
+
+
+
+title_font=18
+fontsize=14
+labelsize=14
 cbar_fontsize=10
 val_size=9
 
+def model_name_for_plotting(model_name):
+    if model_name == "gpt2":
+        return "GPT-2 Small"
+    elif model_name=="gpt2-large":
+        return "GPT-2 Large"
+    elif model_name=="Qwen/Qwen2.5-0.5B":
+        return "Qwen2.5-0.5B"
+    elif model_name=="Qwen/Qwen2.5-7B":
+        return "Qwen2.5-7B"
+    
 #----------------------------------------------------------------------------------------------------
 # Heatmaps
 #----------------------------------------------------------------------------------------------------
@@ -363,21 +380,32 @@ def choose_metric_sparsity_plot_function(
     y_metric2:str=None, 
     title="", 
     p1=None, 
-    p2=None
+    p2=None, 
+    save_image=False, 
+    out_path="",
+    save_title=""
     ):
+    
     if df2 is None:
         if y_metric2 is None:
             fig = one_curve_one_metric_sparsity(
                 df=df1, 
                 cliff_value=cliff_value1, 
                 y_metric=y_metric1, 
-                title=title)
+                title=title, 
+                save_image=save_image, 
+                out_path=out_path,
+                save_title=save_title
+                )
         else:
             fig = one_curve_multiple_metrics_sparsity(
                 df=df1, 
                 cliff_value=cliff_value1, 
                 y_metric1=y_metric1,
-                y_metric2=y_metric2
+                y_metric2=y_metric2, 
+                save_image=save_image, 
+                out_path=out_path,
+                save_title=save_title
             )
     else:
         if y_metric2 is None:
@@ -387,8 +415,12 @@ def choose_metric_sparsity_plot_function(
                 cliff_value1=cliff_value1, 
                 cliff_value2=cliff_value2, 
                 y_metric=y_metric1, 
-                title=title
-            )
+                title=title, 
+                save_image=save_image, 
+                out_path=out_path,
+                save_title=save_title
+                )
+            
         else:
             fig = two_curves_multiple_metrics_sparsity(
                 df1=df1, 
@@ -399,8 +431,12 @@ def choose_metric_sparsity_plot_function(
                 y_metric2=y_metric2, 
                 title=title, 
                 p1=p1, 
-                p2=p2
-            )
+                p2=p2, 
+                save_image=save_image, 
+                out_path=out_path,
+                save_title=save_title
+                )
+            
 
     return fig
             
@@ -408,7 +444,10 @@ def one_curve_one_metric_sparsity(
     df:pd.DataFrame, 
     cliff_value:Union[int, float], 
     y_metric:str="performance", 
-    title=""
+    title="", 
+    save_image=False, 
+    out_path="",
+    save_title=""
     ):
     """Plot one Evaluation Metric vs sparsity ratio
 
@@ -422,9 +461,9 @@ def one_curve_one_metric_sparsity(
     plt.style.use("ggplot")
     custom_colors = sns.color_palette("Set2")
     plt.rcParams["axes.prop_cycle"] = cycler(color=custom_colors)
-
     # get important cols from df
-    sparsities = df[y_metric]
+    
+    sparsities = df["sparsity_ratio"]
     y = df[y_metric]
     
     # suplot
@@ -432,11 +471,11 @@ def one_curve_one_metric_sparsity(
     fig.subplots_adjust(hspace=0.05)
     
     ax.plot(sparsities, y, 's-')
-    ax.set_ylim(max(0, min(y) - 2), max(y) + 2)  
+    #ax.set_ylim(max(0, min(y) - 2), max(y) + 2)  
 
     # find the cliff points as index of the df 
     if cliff_value < 1:
-        cliff_idx = y.tolist().index(cliff_value)
+        cliff_idx = sparsities.tolist().index(cliff_value)
     else:
         cliff_idx = cliff_value
     ax.axvline(x=sparsities.iloc[cliff_idx], color="red", linestyle=":")
@@ -457,7 +496,10 @@ def one_curve_multiple_metrics_sparsity(
     cliff_value:Union[int, float], 
     y_metric1:str="performance", 
     y_metric2:str="TPR", 
-    title=""
+    title="", 
+    save_image=False, 
+    out_path="",
+    save_title=""
     ):
     """Subplot with two evaluation metrics over different sparsity ratios. 
     Usually performance and TPR are the evaluation metrics.
@@ -472,6 +514,10 @@ def one_curve_multiple_metrics_sparsity(
     Returns:
         fig: Figure
     """    
+    
+    col2 = "#348246"
+    col1 = "#8172b3"
+    
     plt.style.use("ggplot")
     custom_colors = sns.color_palette("Set2")
     plt.rcParams["axes.prop_cycle"] = cycler(color=custom_colors)
@@ -490,7 +536,7 @@ def one_curve_multiple_metrics_sparsity(
     ax2.plot(sparsities, y2, 's-')
     
     ax1.set_ylim(min(y1), max(y1)) 
-    ax2.set_ylim(min(y2) - 2, max(y2) + 2)  
+    #ax2.set_ylim(min(y2) - 2, max(y2) + 2)  
     
     # Hide the spines between the two plots
     ax2.spines['top'].set_visible(False)
@@ -525,13 +571,19 @@ def two_curves_one_metric_sparsity(
     cliff_value1:Union[int, float], 
     cliff_value2:Union[int, float], 
     y_metric:str="performance",
-    title:str=""
+    title:str="", 
+    save_image=False, 
+    out_path="",
+    save_title=""
     ):
     
     """Plot two curves from two different circuits with two different cliff points over one metric """
     plt.style.use("ggplot")
     custom_colors = sns.color_palette("Set2")
     plt.rcParams["axes.prop_cycle"] = cycler(color=custom_colors)
+    
+    col2 = "#348246"
+    col1 = "#8172b3"
 
     # get important cols from df
     curve1_sparsities = df1["sparsity_ratio"]
@@ -543,10 +595,10 @@ def two_curves_one_metric_sparsity(
     fig, ax = plt.subplots(1, 1, figsize=(9, 6))
     fig.subplots_adjust(hspace=0.05)
 
-    line1, = ax.plot(curve1_sparsities, curve1_y, 's-', label="Vanilla", linewidth=2)
-    line2, = ax.plot(curve2_sparsities, curve2_y, 's-', label="Subtracted", linewidth=2)
+    line1, = ax.plot(curve1_sparsities, curve1_y, 's-', label="Vanilla", linewidth=2, color=col2)
+    line2, = ax.plot(curve2_sparsities, curve2_y, 's-', label="Subtracted", linewidth=2, color=col1)
     
-    ax.set_ylim(min(curve1_y) - 2, max(curve1_y) + 2)  
+    #ax.set_ylim(min(curve1_y) - 2, max(curve1_y) + 2)  
 
     if cliff_value1 < 1:
         cliff_idx1 = curve1_sparsities.tolist().index(cliff_value1)
@@ -572,14 +624,16 @@ def two_curves_one_metric_sparsity(
         linestyle=":", 
         linewidth=3
         )
+    ax.set_xticklabels([0, 1.0, 0.8, 0.6, 0.4, 0.2, 0.0] )
+
     
     # legends and labels
     plt.xlabel("Sparsity Ratio", fontsize=title_font)
-    ax.set_ylabel("True Positives", fontsize=title_font)
+    ax.set_ylabel("TPR", fontsize=title_font)
     plt.xticks(rotation=0,  fontsize=title_font)
     plt.yticks(rotation=0,  fontsize=title_font)
     ax.set_title(title)
-    plt.legend(loc='upper right', fontsize=title_font)
+    plt.legend(loc='lower left', fontsize=title_font)
 
     return fig
 
@@ -593,7 +647,10 @@ def two_curves_multiple_metrics_sparsity(
     y_metric2:str="TPR", 
     title="", 
     p1=None, 
-    p2=None
+    p2=None,
+    save_image=False, 
+    out_path="",
+    save_title="",
     ):
     """Plot two evaluation metrics for two different curves to the sparsity ratio"""
 
@@ -605,7 +662,6 @@ def two_curves_multiple_metrics_sparsity(
     curve1_sparsities = df1["sparsity_ratio"]
     curve2_sparsities = df2["sparsity_ratio"]
 
-    print(df1)
     curve1_metric1 = df1[y_metric1] # usually performance
     curve1_metric2 = df1[y_metric2] # usually TPR
     curve2_metric1 = df2[y_metric1] # usually performance
@@ -623,18 +679,18 @@ def two_curves_multiple_metrics_sparsity(
     ax1.plot(curve1_sparsities, curve1_metric1,'o-', color=col1)
     ax2.plot(curve1_sparsities,  curve1_metric2, 's-', color=col1,)
     
-    ax1.plot(curve1_sparsities, curve1_metric2, 'o-', color=col2)
+    ax1.plot(curve1_sparsities, curve2_metric1, 'o-', color=col2)
     ax2.plot(curve1_sparsities, curve2_metric2, 's-', color=col2)
-    print(curve1_metric2)
     
     ax1.set_ylim(min(min(curve1_metric1), min(curve2_metric1)), max(max(curve1_metric1), max(curve2_metric1)))
-    ax2.set_ylim(min(min(curve1_metric2), min(curve2_metric2)) - 2, max(max(curve1_metric2), max(curve2_metric2)) + 2)  
+    #ax2.set_ylim(min(min(curve1_metric2), min(curve2_metric2)) - 2, max(max(curve1_metric2), max(curve2_metric2)) + 2)  
     
     # Hide the spines between the two plots
     ax2.spines['top'].set_visible(False)
 
     ax1.tick_params(labeltop=False)  
     ax2.tick_params(labeltop=False)
+    ax1.set_xticklabels([0, 1.0, 0.8, 0.6, 0.4, 0.2, 0.0] )
 
     # find the cliff points as index of the df 
     if cliff_value1 is not None and cliff_value2 is not None:
@@ -692,6 +748,9 @@ def two_curves_multiple_metrics_sparsity(
     ax2.tick_params(axis='y', rotation=0, labelsize=fontsize)
     ax1.set_title(title, fontsize=title_font)
 
+    if save_image:
+        save_img(fig, out_path=out_path, name=save_title)
+
     return fig
 
 #----------------------------------------------------------------------------------------------------
@@ -702,6 +761,8 @@ def plot_activations(
     activations: Float[Tensor, "seq seq"],
     tokens: Float[Tensor, "1 seq"], 
     head:tuple,
+    x_label="Attended Token",
+    y_label="Current Token", 
     print_vals:bool=False,
     title:str=""):
     """Plot the Activation Pattern of a head over a specific token sequence during a forward pass
@@ -738,8 +799,8 @@ def plot_activations(
     plt.title(f"{title} Layer {head[0]}, Head {head[1]}",  fontsize=title_font)
     #plt.title(f"{title}",  fontsize=axis_label_size + 2)
 
-    plt.xlabel("Attended Token", fontsize=fontsize)
-    plt.ylabel("Current Token", fontsize=fontsize)
+    plt.xlabel(x_label, fontsize=title_font)
+    plt.ylabel(y_label, fontsize=title_font)
     plt.xticks(rotation=90,  fontsize=labelsize)
     plt.yticks(rotation=0,  fontsize=labelsize)
     plt.tight_layout()
@@ -793,10 +854,12 @@ def pareto(
     y_metric:str,
     all_tasks:List[str], 
     min_performance:int=75, 
-    total_model_heads:int=144, 
+    max_circuit_size:int=float("inf"),
     save_image:bool=False, 
     show_image:bool=True,
-    out_path:str=""):
+    out_path:str="", 
+    focus_on_performance=False
+    ):
     """Pareto frontier between two metrics
 
     Args:
@@ -836,13 +899,88 @@ def pareto(
             return pd.DataFrame(pareto)
 
         pareto = pareto_frontier(df_task, x_metric, y_metric)
-
+        
         try:
-            best_point = df_task[df_task["performance"] >= min_performance].sort_values(by="size").iloc[0]
-            if best_point["size"] > total_model_heads/2:
+            best_point = df_task[df_task["performance"] >= min_performance].sort_values(by=["size", "performance"], ascending = [True, False]).iloc[0]
+            if best_point["size"] > max_circuit_size:
                 raise Exception
-        except:
-            best_point = df_task[df_task["performance"] >= df_task["performance"].mean()].sort_values(by="size").iloc[0]
+
+        except:            
+            # if no point is over 75%, choose that point on the pareto curve furthest away from line between leftmost and rightmost pareto point
+            df_pareto = df_task.loc[pareto.index]
+            x = df_pareto["size"].values
+            y = df_pareto["performance"].values
+            
+            # line between leftmost and rightmost pareto point
+            p1 = np.array([x[0], y[0]])
+            p2 = np.array([x[-1], y[-1]])
+            v = p2 - p1
+            v_norm = np.linalg.norm(v)
+
+            # only choose pareto points above line
+            signed_distances = []
+            for i in range(len(x)):
+                # distance of each point above line to it
+                p = np.array([x[i], y[i]])
+                cross = np.cross(v, p - p1)
+                signed_distances.append(cross / v_norm)
+
+            signed_distances = np.array(signed_distances)
+            valid = signed_distances > 0
+            
+            def sublistfinder(list, sublist, last_knee=False):
+                if not last_knee:
+                    for i in  range(len(list)-len(sublist)):
+                        if (list[i:i+len(sublist)] == sublist).all():
+                            return i
+                else:
+                    for i in range(len(list)-len(sublist), 0, -1):
+                        if (list[i:i+len(sublist)] == sublist).all():
+                            return i
+                return -1    
+            
+            if not any(valid):
+                #   Case 1: no valid pareto point:
+                # - for FLAP: choose point with highest performance, consistent with constraint circuits_siue <= max_circuit_size
+                # - for PP and APP: choose point with smallest circuit
+                if focus_on_performance and len(df_pareto)-1 > 0:
+                    for knee_idx in range(len(df_pareto)-1, 0, -1):
+                        if df_pareto.iloc[knee_idx].size <= max_circuit_size:
+                            break
+                else:
+                    knee_idx=0
+            
+            elif not sublistfinder(valid[1:-1], [True, False]) == -1 and not sublistfinder(valid[1:-1], [False, True]) == -1:
+                #   Case 2: "Zig-Zagging" pareto point: "optimal line" is crossed multiple times 
+                # - for FLAP: choose last point crossing line
+                # - for PP and APP: choose argmax
+                if focus_on_performance and len(df_pareto)-1 > 0:
+                    knee_idx = sublistfinder(valid, [True, False], last_knee=True)
+                else:
+                    knee_idx = sublistfinder(valid, [True, False])
+
+
+            else:  
+                #    Case 3: else
+                # - take valid pareto point furthest from line 
+                knee_idx = np.argmax(signed_distances * valid)
+                
+                if focus_on_performance:
+                    if signed_distances[knee_idx] < 1 and df_pareto["size"].values[-1] < max_circuit_size:
+                        knee_idx = -1
+                        
+                    # if behind knee point is still one very steep point with steeper gradient, take it 
+                    delta_x = [x[i+1] - x[i] for i in range(len(df_pareto["size"].values)-1)]
+                    delta_y = [y[i+1] - y[i] for i in range(len(df_pareto["performance"].values)-1)]
+                    gradient = [dy / dx if dx != 0 else float("-inf") for dx, dy in zip(delta_x, delta_y)] 
+                    if max(gradient[knee_idx:]) > gradient[knee_idx-1]:
+                        grad_idx = gradient.index(max(gradient[knee_idx:])) + 1
+                        if grad_idx < max_circuit_size:
+                            knee_idx = grad_idx
+
+            best_point = df_pareto.iloc[knee_idx]
+
+            #best_point = df_task[df_task["performance"] >= df_task["performance"].mean()].sort_values(by=["size", "performance"], ascending = [True, False]).iloc[0]
 
 
         fig, ax = plt.subplots(figsize=(8,6))
@@ -863,7 +1001,99 @@ def pareto(
         if save_image:
             save_img(fig, out_path=out_path, name=f"pareto_{task}.png")
             
+
+#----------------------------------------------------------------------------------------------------
+# Circuit Analysis - Recall/Precicion Venn Diagram
+#----------------------------------------------------------------------------------------------------
+
+def precicion_recall_venn_diagram(
+    df, 
+    save_image=False, 
+    show_image=True, 
+    directory="results/", 
+    name="VennDiagramm", 
+    label_name="APP"):
+    
+    models = df["model_name"].unique()
+    tasks=df["task"].unique()
+    
+    fig, axes = plt.subplots(len(models), len(tasks), figsize=(3 * len(models), 14))
+
+    for i, model in enumerate(models):
+        model_name = model_name_for_plotting(model)
+
+        for j, task in enumerate(tasks):
+                        
+            df_row = df[(df.task == task) & (df.model_name == model)]
             
+            if df_row.empty:
+                axes[i, j].set_visible(False)
+                continue
+            
+            recall = df_row.get("recall").item()
+            prec = df_row.get("prec").item()
+            circuit_size_gt = df_row.get("size_gt").item()
+            circuit_size = df_row.get("size_circuit").item() 
+            intersection = df_row.get("intersection").item() 
+
+            subset_sizes = {
+                "10" : circuit_size_gt - intersection,
+                "01" : circuit_size - intersection,
+                "11" : intersection,
+            }
+            
+            axes[i, j].set_title(task)
+            v = venn2(subset_sizes, ax=axes[i, j], set_labels=(["", ""]), alpha=0.5,) 
+            
+            text = f"TPR: {recall*100:.2f}% \n P: {prec*100:.2f}%"
+            axes[i, j].text(0.5, -0.1, text, ha="center", va="center", transform=axes[i,j].transAxes, fontsize=labelsize)
+            axes[i, j].set_xlim(-0.7, 0.7)
+            axes[i, j].set_ylim(-0.7, 0.7)
+            axes[i, j].set_aspect('equal', adjustable='box')
+
+                    
+            if v.get_label_by_id("10"):
+                v.get_label_by_id("10").set_text(f"")
+                v.get_patch_by_id('10').set_color('#1f77b4')
+
+            if v.get_label_by_id("01"):
+                v.get_label_by_id("01").set_text(f"")
+                v.get_patch_by_id('01').set_color('#ff7f0e')
+
+            if v.get_label_by_id("11"):
+                v.get_label_by_id("11").set_text(f"")
+                v.get_patch_by_id('11').set_color('#8f7b61')
+
+    for i, model in enumerate(models):
+        model_name = model_name_for_plotting(model)
+        y0 = axes[i, 0].get_position().y0
+        y1 = axes[i, 0].get_position().y1
+        y_mid = (y0 + y1) / 2
+        fig.text(0.1, y_mid, model_name, ha="right", va="center",
+                 rotation=90, fontsize=title_font, fontweight="bold")
+        
+
+    for j in range(1, len(models)):
+        y0 = axes[j, 0].get_position().y0
+        y1 = axes[j, 0].get_position().y1
+        l = Line2D((0.15, 0.9), (y0+0.15, y0+0.15),ls='--',color='grey')
+        fig.add_artist(l)
+
+    legend_elements = [
+                Patch.Patch(color=v.get_patch_by_id("10").get_facecolor(), label="PP"),
+                Patch.Patch(color=v.get_patch_by_id("01").get_facecolor(), label=label_name),
+                Patch.Patch(color=v.get_patch_by_id("11").get_facecolor(), label=f"PP ∩ {label_name}")
+            ]
+    
+    fig.legend(handles=legend_elements, loc="upper right",  fontsize=labelsize, bbox_to_anchor=(1.02, 0.88))
+    
+    if save_image:
+        save_img(fig, directory, name)
+
+    if show_image:
+        fig.show()
+
+
 #----------------------------------------------------------------------------------------------------
 # Efficency
 #----------------------------------------------------------------------------------------------------

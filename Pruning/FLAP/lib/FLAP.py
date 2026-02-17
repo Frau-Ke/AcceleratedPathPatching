@@ -19,10 +19,10 @@ from logger_config import logger
 from dataset.loader import load_dataset
 from utils.data_io import save_img, create_folder, save_parser_information, save_circuit, store_df, save_parser_information, set_PATH, get_PATH
 from utils.metrics import ave_logit_diff
-from utils.eval_circuit import batch_evaluate_circiut, print_statistics, performance_gain
+from utils.eval_circuit import batch_evaluate_circiut, print_statistics
 from utils.visualization import heat_map_pruning, choose_metric_sparsity_plot_function
 from utils.model_loader import get_gpt2_adapt_to_llama, load_tokenizer, load_hooked_transformer, load_transformer
-from utils.circuit_functions import get_intersection_num, TPR, FPR, circuit_size
+from utils.circuit_functions import get_intersection_num, TPR, FPR, circuit_size, precision
 
 def detect_cliff(values, slope_window=5, min_consec=10, slope_threshold=-0.4):
     values = np.array(values)
@@ -51,7 +51,7 @@ def detect_cliff(values, slope_window=5, min_consec=10, slope_threshold=-0.4):
 def biggest_cliff(results, window, drop_threshold=5):
     drops = []
     for i in range(0, len(results)-window):
-        drops.append(abs(results[i] - min(results[i+1:i+window])))
+        drops.append(abs(results[i] - min(results[i+1:i+window+1])))
 
     max_drop = max(drops)
     cliff_idx = drops.index(max_drop)
@@ -70,12 +70,10 @@ def biggest_cliff(results, window, drop_threshold=5):
     
 def first_cliff(results,  window, drop_threshold):
     for i in range(0, len(results)-window):
-        min_val = min(results[i+1:i+window])
+        min_val = min(results[i+1:i+window+1])
         drop = abs(results[i] - min_val)
         # first value with drop > drop_threshold is potential cliff candidate
         if drop >= drop_threshold:
-            print("idx", i)
-            print("results", results[i] )
             cliff_idx = i
             # check for valley:
             if results[i] > max(results[i+1:]):
@@ -122,15 +120,15 @@ def evaluate_sparsity_ratios(
     mlp_scores,
     mlp_mask,
     ):
-    
-    results = pd.DataFrame(columns=["sparsity_ratio", "res", "performance", "gain", "diff", "TPR"])
-    
+
+    results = pd.DataFrame(columns=["size", "sparsity_ratio", "res" "performance", "diff", "TPR", "P"])
+
     np.random.seed(args.seed)
     torch.random.manual_seed(args.seed)
 
     # ------ get circuits ------
     try:
-        GT_CIRCUIT = choose_circuit(args.task, args.model_name)
+        GT_CIRCUIT = choose_PP_circuit(args.task, args.model_name)
     except:
         GT_CIRCUIT = {}
 
@@ -165,7 +163,7 @@ def evaluate_sparsity_ratios(
         
         TOTAL_GFLOPS += GFLOPS
         
-        ave_logit, performance = batch_evaluate_circiut(
+        ave_logit, performance,_ = batch_evaluate_circiut(
             model = model_hooked, 
             CIRCUIT=CIRCUIT,
             dataset=eval_dataset,
@@ -176,15 +174,16 @@ def evaluate_sparsity_ratios(
             batch_size = args.batch_size 
             )
         
-        gain = performance_gain(performance_new=performance, performance_old=gt_circuit_performance)
 
         diff = ave_logit_old - ave_logit
-        true_pos = get_intersection_num(CIRCUIT, GT_CIRCUIT)
-        
+        recall = TPR(CIRCUIT, GT_CIRCUIT)
+        prec = precision(CIRCUIT, GT_CIRCUIT)
+        size = circuit_size(CIRCUIT)
+
         if args.verbose:
-            print(f"sparsity_ratio: {args.pruning_ratio}, ave_logit_diff: {ave_logit}, performance: {performance}, gain {gain}, diff: {diff}, TPR:{true_pos}")
+            print(f"size: {size}, sparsity_ratio: {args.pruning_ratio}, res: {ave_logit},  performance: {performance}, diff: {diff}, TPR:{recall}, P: {prec}")
         
-        new_col = pd.DataFrame({"sparsity_ratio":args.pruning_ratio, "res":ave_logit, "performance":performance, "gain":gain, "diff":diff, "TPR":true_pos}, index=[0])
+        new_col = pd.DataFrame({"size": size, "sparsity_ratio":args.pruning_ratio, "res": ave_logit, "performance":performance, "diff":diff, "TPR":recall, "P": prec}, index=[0])
         results = pd.concat([results, new_col], ignore_index=True)
         ave_logit_old = ave_logit
 
@@ -271,7 +270,7 @@ def hybrid_FLAP(
         INIT_FLOPS += num_traversed_layers * FLOPS_BY_MODULE["blocks.0"] * epochs
     # ------ get circuits ------
     try:
-        GT_CIRCUIT = choose_circuit(args.task, args.model_name)
+        GT_CIRCUIT = choose_PP_circuit(args.task, args.model_name)
     except:
         GT_CIRCUIT = {}
     
@@ -292,7 +291,7 @@ def hybrid_FLAP(
         )
 
     # ------ ave logit of gt circuit ------
-    gt_circuit_ave_logit, gt_circuit_performance = batch_evaluate_circiut(
+    gt_circuit_ave_logit, gt_circuit_performance, _ = batch_evaluate_circiut(
         model = model_hooked, 
         CIRCUIT=GT_CIRCUIT,
         dataset=eval_dataset,
@@ -353,10 +352,8 @@ def hybrid_FLAP(
     
     if args.verbose:
         print("INIT_FLOPS", INIT_FLOPS/1e9)
-        print("INIT COMP TIME", INIT_COMP_TIME)
-    ##### CasualLM
-    
-    print("INIT_COMP_TIME", INIT_COMP_TIME)    
+        print("INIT COMP TIME", INIT_COMP_TIME)    
+        print("INIT_COMP_TIME", INIT_COMP_TIME)    
     # ---- window size is 10% of the toal amount of values
     window=round((args.highest_sparsity-args.lowest_sparsity) / 10)
     average_window = window
@@ -375,7 +372,7 @@ def hybrid_FLAP(
         subfolder = args.out_path + result_folder
 
     create_folder(subfolder)                
-    final_results = pd.DataFrame(columns=["pruning_type", "sparsity_ratio", "size", "ave_logit_diff", "performance", "gain", "TPR", "FPR", "half_life", "FLOP", "comp_time"])
+    final_results = pd.DataFrame(columns=["pruning_type", "sparsity_ratio", "size", "ave_logit_diff", "performance", "TPR", "FPR", "half_life", "FLOP", "comp_time"])
     
 
     #----------------------------------------------------------------------------------------------------
@@ -389,11 +386,10 @@ def hybrid_FLAP(
     
     args.metrics = "WIFV"
     args.difference_with = "None"    
-        
     # ----- Cliff ------
     results_clean_loop = results_clean[(results_clean["sparsity_ratio"] >= args.lowest_sparsity / 100) & (results_clean["sparsity_ratio"] < args.highest_sparsity / 100)]#.iloc[:, 0].tolist()
     performance_metric_clean = results_clean_loop[y_variable].tolist()
-    
+    print(performance_metric_clean)
     max_diff = max(results_clean_loop[y_variable]) - min(results_clean_loop[y_variable])
     drop_threshold = max_diff / 10 # drop 10% performance of max difference over a window of length x
     slope_threshold=(max_diff/250) * 0.5 -((10-average_window)/100)
@@ -440,10 +436,11 @@ def hybrid_FLAP(
             df1=results_clean_loop, 
             cliff_value1=half_life_sparsity_clean,
             y_metric1="TPR", 
+            #title=""
             title=f"half life - FLAP on {args.task} task"
             )
         
-        save_img(fig, name=f"half_life_clean", out_path=f"{args.model_name}/{args.task}/Pruning/half_life")
+        save_img(fig, name=f"half_life_clean", out_path=f"{args.out_path}{args.model_name}/{args.task}/Pruning/half_life")
 
     if cliff_idx==-1:
         clean_cliff= 0.75                     
@@ -486,7 +483,6 @@ def hybrid_FLAP(
             performance_achieved=res["performance"],
             CIRCUIT=CIRCUIT_CLEAN, 
             IOI_CIRCUIT=GT_CIRCUIT,
-            performance_gain=res["gain"]
             )
         print(res_pruned_model)
 
@@ -500,7 +496,6 @@ def hybrid_FLAP(
         "size": circuit_size(CIRCUIT_CLEAN),
         "ave_logit_diff":res["res"], 
         "performance":res["performance"], 
-        "gain":res["gain"], 
         "TPR":true_pos_ratio, 
         "FPR": false_pos_ratio,
         "half_life": half_life_sparsity_clean,
@@ -640,7 +635,6 @@ def hybrid_FLAP(
             performance_achieved=res["performance"],
             CIRCUIT=CIRCUIT_ABLATED, 
             IOI_CIRCUIT=GT_CIRCUIT,
-            performance_gain=res["gain"]
             )
         print(res_pruned_model)
 
@@ -655,7 +649,6 @@ def hybrid_FLAP(
         "size": circuit_size(CIRCUIT_ABLATED),
         "ave_logit_diff":res["res"], 
         "performance":res["performance"], 
-        "gain":res["gain"], 
         "TPR":true_pos_ratio, 
         "FPR": false_pos_ratio,
         "half_life":half_life_sparsity_corr,
@@ -712,8 +705,9 @@ def hybrid_FLAP(
             cliff_value1=half_life_sparsity_clean,
             df2=results_corr_loop, 
             cliff_value2=half_life_sparsity_corr,
-            y_metric2="TPR", 
-            title=f"half life - {args.task} task"
+            y_metric1="TPR", 
+            title=""
+            #title=f"half life - {args.task} task"
             )
         
         

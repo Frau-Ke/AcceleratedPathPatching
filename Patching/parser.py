@@ -72,7 +72,7 @@ add_args("--save_every_x_steps", default=5, type=int, help="store intermediate r
 add_args("--min_value_threshold", default=0.02, type=float, help="ignore all heads if max activation is below min_activation_threshold")
 
 # Accelerated Path Patching
-add_args("--pruning_circuit", default="none", choices=["none", "vanilla, contrastive, hybrid"], help="Pruning Circuits for APP, if none then PP")
+add_args("--pruning_circuit", default="none", choices=["none", "vanilla", "contrastive", "hybrid"], help="Pruning Circuits for APP, if none then PP")
 
 # Plotting, Prinitng, Saving
 add_args("--show", action="store_true")
