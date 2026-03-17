@@ -25,7 +25,7 @@ from matplotlib_venn.layout.venn2 import DefaultLayoutAlgorithm
 
 
 title_font=18
-fontsize=14
+fontsize=10
 labelsize=14
 cbar_fontsize=10
 val_size=9
@@ -125,55 +125,6 @@ def heat_map_path_patching(
     for s in senders:
         ax, handles = outline_senders(node=s, ax=ax)
         
-    fig.tight_layout()
-    if show:
-        plt.show()
-    if save:
-        save_img(fig, subfolder, name+ ".png")
-
-
-def heat_map_layer_pos(
-    metric_scores: Float[Tensor, "layer pos"], 
-    title: str, 
-    color_axis_title: str, 
-    show: bool = True,
-    save: bool = False,
-    name: str = "",
-    subfolder: str = "",
-    labels: Optional[str] = None
-    ):
-    """Heatmap (Layer x Seq_Pos) 
-
-    Args:
-        metric_scores ( Float[Tensor, "layer head"]): Influence scores for each head over a specific metric (usually avg_logit_diff)
-        title (str): _description_
-        color_axis_title (str): _description_
-        show (bool, optional): _description_. Defaults to True.
-        save (bool, optional): _description_. Defaults to False.
-        name (str, optional): _description_. Defaults to "".
-        subfolder (str, optional): _description_. Defaults to "".
-        labels (Optional[str], optional): _description_. Defaults to None.
-    """
-    n_layers, seq_len = metric_scores.shape
-    
-    fig, ax = plt.subplots()
-    im = ax.imshow(metric_scores, cmap="RdBu", norm=mpl.colors.CenteredNorm())
-    
-    # Show all ticks and label them with the respective list entries
-    ax.set_yticks(np.arange(0, n_layers))
-    ax.set_xticks(np.arange(0, seq_len))
-
-    if labels is not None:
-        ax.set_xticklabels(labels)
-        ax.xaxis.set_tick_params(rotation=45, labelsize=10)
-    
-    ax.set_ylabel("Layers")
-    ax.set_xlabel("Position")
-
-    cbar = ax.figure.colorbar(im, ax=ax)
-    cbar.ax.set_ylabel(color_axis_title, rotation=-90, va="bottom")
-
-    ax.set_title(title)
     fig.tight_layout()
     if show:
         plt.show()
@@ -576,7 +527,7 @@ def two_curves_one_metric_sparsity(
     out_path="",
     save_title=""
     ):
-    
+
     """Plot two curves from two different circuits with two different cliff points over one metric """
     plt.style.use("ggplot")
     custom_colors = sns.color_palette("Set2")
@@ -738,14 +689,14 @@ def two_curves_multiple_metrics_sparsity(
     all_handles =  var1_handles + var2_handles + cliff_handles + point_handle
 
     # legends and labels
-    ax1.legend(handles=all_handles, loc='lower left', frameon=True, fontsize=fontsize)# bbox_to_anchor=(1.35, 1), fontsize=fontsize)
-    plt.xlabel("Sparsity Ratio", fontsize=fontsize)
-    ax1.set_ylabel("Perfromance (%)", fontsize=fontsize)
-    ax2.set_ylabel("True Positives", fontsize=fontsize)
-    ax1.tick_params(axis='x', rotation=0, labelsize=fontsize)
-    ax1.tick_params(axis='y', rotation=0, labelsize=fontsize)
-    ax2.tick_params(axis='x', rotation=0, labelsize=fontsize)
-    ax2.tick_params(axis='y', rotation=0, labelsize=fontsize)
+    ax1.legend(handles=all_handles, loc='lower left', frameon=True, fontsize=labelsize)# bbox_to_anchor=(1.35, 1), fontsize=fontsize)
+    plt.xlabel("Sparsity Ratio", fontsize=labelsize)
+    ax1.set_ylabel("Perfromance (%)", fontsize=labelsize)
+    ax2.set_ylabel("True Positives", fontsize=labelsize)
+    ax1.tick_params(axis='x', rotation=0, labelsize=labelsize)
+    ax1.tick_params(axis='y', rotation=0, labelsize=labelsize)
+    ax2.tick_params(axis='x', rotation=0, labelsize=labelsize)
+    ax2.tick_params(axis='y', rotation=0, labelsize=labelsize)
     ax1.set_title(title, fontsize=title_font)
 
     if save_image:
@@ -822,7 +773,7 @@ def circuit_analysis_barplot(
 
     # title and axis label
     ax.set_title("", fontsize=title_font)
-    ax.set_ylabel("Number of Heads", fontsize=fontsize)
+    ax.set_ylabel("Number of Heads", fontsize=labelsize)
     ax.set_xlabel("")
 
     # x-ticks
@@ -831,7 +782,7 @@ def circuit_analysis_barplot(
     ax.tick_params(axis='x',  which="both", length=5, labelrotation=45)
 
     # legend
-    ax.legend(fontsize=fontsize, facecolor="white", frameon=True)
+    ax.legend(fontsize=labelsize, facecolor="white", frameon=True)
     
     # grid
     ax.yaxis.set_major_locator(MaxNLocator(integer=True))

@@ -1,28 +1,32 @@
-import os 
 import numpy as np
 import torch
 import gc
 import pandas as pd
-import matplotlib as mpl
-import matplotlib.pyplot as plt 
-from matplotlib.pyplot import imshow
 from fvcore.nn import FlopCountAnalysis
 import time
+import warnings 
+from functools import partial
+
+
+from typing import List, Optional, Callable, Tuple, Dict, Literal, Set, Union
+from jaxtyping import Float, Int, Bool
+from torch import Tensor
 
 from Pruning.FLAP.models.hf_llama.modeling_llama import LlamaForCausalLM
-from Pruning.FLAP.models.hf_gpt.modeling_gpt2 import load_pretrained_llama_style_gpt2
+from Pruning.FLAP.models.hf_gpt.modeling_gpt2 import GPT2LMHeadModel2Llama
+from transformer_lens import HookedTransformer
 from Pruning.FLAP.lib.prune import CIRCUIT_from_scores, head_wise_pruning_scores, prune_flap_modular
 from Pruning.FLAP.lib.parser import parser
 
-from circuits.circuits_PP import choose_PP_circuit, get_circuit_name
-from logger_config import logger
 from dataset.loader import load_dataset
-from utils.data_io import save_img, create_folder, save_parser_information, save_circuit, store_df, save_parser_information, set_PATH, get_PATH
+from utils.data_io import save_img, create_folder, save_parser_information, save_circuit, store_df, save_parser_information, set_PATH, get_PATH, save_panda_to_text
 from utils.metrics import ave_logit_diff
 from utils.eval_circuit import batch_evaluate_circiut, print_statistics
 from utils.visualization import heat_map_pruning, choose_metric_sparsity_plot_function
 from utils.model_loader import get_gpt2_adapt_to_llama, load_tokenizer, load_hooked_transformer, load_transformer
-from utils.circuit_functions import get_intersection_num, TPR, FPR, circuit_size, precision
+from utils.circuit_functions import TPR, circuit_size, precision
+from utils.utils import get_model_parameters
+
 
 def detect_cliff(values, slope_window=5, min_consec=10, slope_threshold=-0.4):
     values = np.array(values)
@@ -68,6 +72,7 @@ def biggest_cliff(results, window, drop_threshold=5):
 
     return cliff_idx
     
+    
 def first_cliff(results,  window, drop_threshold):
     for i in range(0, len(results)-window):
         min_val = min(results[i+1:i+window+1])
@@ -108,52 +113,255 @@ def moving_average(data, avg_window):
     return averaged
 
 
-def evaluate_sparsity_ratios(
+def identify_cliff_points(
+    sparsity_metrics_df:pd.DataFrame, 
+    window:float,
+    y_variable:str="performance",
+    cliff_point:str="first",
+    ) -> int:     
+    y_metric_list = sparsity_metrics_df[y_variable].tolist()
+    max_diff = max(y_metric_list) - min(y_metric_list)
+    drop_threshold = max_diff / 10  # drop 10% performance of max difference over a window of length x
+    slope_threshold=(max_diff/250) * 0.5 -((10-window)/100)
+    slope_threshold=-slope_threshold * 10
+
+    if cliff_point=="first":
+        cliff_idx = first_cliff(y_metric_list, window=window, drop_threshold=drop_threshold)
+        
+    elif cliff_point=="biggest":
+        cliff_idx = biggest_cliff(y_metric_list, window=window, drop_threshold=drop_threshold)
+        
+    elif cliff_point == "smooth_biggest":
+        y_metric_list = moving_average(y_metric_list, avg_window=window)
+        cliff_idx = biggest_cliff(y_metric_list, window=window, drop_threshold=drop_threshold)
+        
+    elif cliff_point == "smooth_first":
+        y_metric_list = moving_average(y_metric_list, avg_window=window)
+        cliff_idx = first_cliff(y_metric_list, window=window, drop_threshold=drop_threshold)
+        
+    elif cliff_point == "fixed":
+        try:
+            fixed_sparsity=0.75 
+            cliff_idx = sparsity_metrics_df["sparsity_ratio"].tolist().index(fixed_sparsity)
+        except:
+            warnings.warn(f"Warning: lowest sparsity is higher than fixed cliff point of 0.75. Set fixed cliff point to lowest sparsity")
+            cliff_idx = 0
+            
+    elif cliff_point == "detect_cliff":
+        cliff_idx = detect_cliff(y_metric_list, slope_window=window, min_consec=window, slope_threshold=slope_threshold)
+        
+    elif cliff_point == "smooth_detect_cliff":
+        y_metric_list = moving_average(y_metric_list, avg_window=window)
+        cliff_idx = detect_cliff(y_metric_list, slope_window=window, min_consec=window, slope_threshold=slope_threshold)
+    else:
+        raise ValueError(f"Unknown cliff type: {cliff_point}")
+    
+    return cliff_idx
+    
+
+def create_folder_structure(args, cliff_point):
+    result_folder =  f"{args.model_name}/{args.task}/Pruning/{cliff_point}/sparsity-min_{args.lowest_sparsity}/"
+    if args.out_path == "":
+        subfolder = result_folder
+    else:
+        subfolder = args.out_path + result_folder
+    create_folder(subfolder)
+    return subfolder
+    
+
+def plot_and_save_heatmap(scores, pruning_metric, GT_CIRCUIT, CIRCUIT, performance, subfolder, save_image, title, save_name):
+    fig = heat_map_pruning(
+                scores, 
+                GT_CIRCUIT=GT_CIRCUIT,
+                PRUNING_CIRCUIT=CIRCUIT, 
+                title=title, #f"{cliff_point} - {args.task} Vanilla FLAP",
+                title_pruning_circuit="FLAP",
+                title_gt_circuit="Path Patching",
+                performance=performance,
+                print_scores=False,
+                title_temp_scale=pruning_metric)
+                
+    if save_image:        
+        save_img(fig, name=save_name, out_path=subfolder)
+    
+
+def plot_and_save_sparstity_performance_curve(sparsity_metrics_df, cliff_value, save_image, title, save_name, subfolder):
+    fig = choose_metric_sparsity_plot_function(
+        df1=sparsity_metrics_df, 
+        cliff_value1=cliff_value,
+        y_metric1="performance", 
+        y_metric2="TPR", 
+        title=title
+        )
+
+    if save_image:
+        save_img(fig, name=save_name, out_path=subfolder)
+
+
+def circuit_metrics(CIRCUIT, GT_CIRCUIT, total_model_size):
+    true_pos_ratio = TPR(CIRCUIT, GT_circuit=GT_CIRCUIT)*100
+    prec = precision(CIRCUIT, GT_CIRCUIT) * 100  
+    size=circuit_size(CIRCUIT)
+    sparsity=circuit_size(CIRCUIT) / total_model_size
+    
+    return true_pos_ratio, prec, size, sparsity
+
+
+def report_loop_information(FLAP_method, cliff_point, extracted_cliff_point, FLAPvsGT_results, LOOP_GFLOP):
+    report=f"{'#' * 20} {FLAP_method} --- Cliff: {cliff_point} {'#' * 20} \n \n " +\
+    f"{cliff_point} cliff point at: {extracted_cliff_point} \n" +\
+    f"{FLAPvsGT_results}\n" +\
+    f"This iteration took {LOOP_GFLOP/1e9} GFLOPs \n"      
+    print(report)
+    
+    
+def half_life_value(args, sparsity_metrics_df, title=""):
+    half_life = sparsity_metrics_df["TPR"].max()/2 
+    half_life_idx = sparsity_metrics_df[sparsity_metrics_df["TPR"]<=half_life].index.values[0]
+    half_life_sparsity= sparsity_metrics_df["sparsity_ratio"].iloc[half_life_idx]
+    
+    fig = choose_metric_sparsity_plot_function(
+        df1=sparsity_metrics_df, 
+        cliff_value1=half_life_sparsity,
+        y_metric1="TPR", 
+        title=f"half life - FLAP on {args.task} task"
+        )
+    
+    save_img(fig, name=title, out_path=f"{args.out_path}{args.model_name}/{args.task}/Pruning/half_life")
+    return half_life_sparsity
+
+
+def evaluate_FLAP_over_cliff_point(
     args, 
-    model_hooked,
-    eval_dataset, 
-    ave_logit_gt,
-    gt_circuit_ave_logit, 
-    gt_circuit_performance,
-    scores, 
-    unstandardized_scores, 
-    mlp_scores,
-    mlp_mask,
+    pruning_method:str,
+    pruning_metric:str,
+    activations:str,
+    cliff_point:str, 
+    sparsity_metrics_df:pd.DataFrame, 
+    GT_CIRCUIT:dict, 
+    INIT_FLOPS:float,
+    INIT_COMP_TIME:float,
+    FLOPS_BY_MODULE:dict, 
+    subfolder:str,
+    model, 
+    tokenizer,
+    y_variable:str="performance"
+    ):
+        start_time = time.time()
+        total_model_size, _, epochs = get_model_parameters(args.model_name, args.N, input_batch_size=args.batch_size)
+
+        # ---- window size is 10% of the toal amount of values
+        window=round((args.highest_sparsity-args.lowest_sparsity) / 10)
+
+        if args.calc_FLOP:
+            LOOP_FLOPS = len(range(args.lowest_sparsity, args.highest_sparsity)) *  FLOPS_BY_MODULE[""] * epochs # lowest - highest number of evaluation forward passes - CLEAN
+        else:
+            LOOP_FLOPS = 0
+                            
+        # ---- identify the cliff points and its associated metrics----
+        cliff_idx = identify_cliff_points(sparsity_metrics_df, window, y_variable, cliff_point)
+        cliff = sparsity_metrics_df["sparsity_ratio"].iloc[cliff_idx]    
+        cliff_metrics = sparsity_metrics_df[sparsity_metrics_df["sparsity_ratio"] == cliff].iloc[0]     
+
+        # ---- retrieve circuit at identified cliff point ----
+        CIRCUIT, scores, GFLOPS, n_traversed_l = prune_flap_modular(args, cliff, model, tokenizer, activations, pruning_metric)
+        LOOP_FLOPS += GFLOPS
+        
+        if args.calc_FLOP:
+            LOOP_FLOPS += n_traversed_l * FLOPS_BY_MODULE["blocks.0"] * epochs
+            
+        LOOP_TIME = time.time() - start_time
+
+        # ---- evaluate the retrieved circuit ----
+        true_pos_ratio, prec, size, sparsity = circuit_metrics(CIRCUIT, GT_CIRCUIT, total_model_size)
+
+        # ---- save results ----
+        loop_results = pd.DataFrame({
+            "pruning_type": pruning_method,
+            "cliff_point": cliff_point,
+            "sparsity_ratio":cliff, 
+            "performance": cliff_metrics["performance"], 
+            "size": size,
+            "sparsity": sparsity, 
+            "TPR":true_pos_ratio, 
+            "P": prec,
+            "FLOP": (LOOP_FLOPS/1e9 + INIT_FLOPS/2)/1e9, 
+            "comp_time":  LOOP_TIME + INIT_COMP_TIME/2
+            }, index=[0])
+    
+
+        # ---- report loop performance ---- 
+        if args.verbose:
+            FLAPvsGT_results = print_statistics(
+                title="*********** FLAP Circuit vs GT Circuit **************",
+                ave_logit=cliff_metrics["ave_logit"], 
+                performance_achieved=cliff_metrics["performance"],
+                CIRCUIT=CIRCUIT, 
+                IOI_CIRCUIT=GT_CIRCUIT,
+                )
+            report_loop_information(
+                FLAP_method=pruning_method,
+                cliff_point=cliff_point, 
+                extracted_cliff_point=cliff, 
+                FLAPvsGT_results=FLAPvsGT_results, 
+                LOOP_GFLOP=LOOP_FLOPS
+            )
+            
+        # ---- plot and save graphics ----
+        if args.show or args.save_img:
+            plot_and_save_sparstity_performance_curve(
+                sparsity_metrics_df, 
+                cliff_value=cliff,
+                save_image=args.save_img,
+                title=f"{pruning_method} FLAP - {cliff_point} cliff for {args.task}",
+                save_name=f"{pruning_method}ROC", 
+                subfolder=subfolder
+            )    
+            
+            plot_and_save_heatmap(
+                scores,
+                pruning_metric,
+                GT_CIRCUIT=GT_CIRCUIT, 
+                CIRCUIT=CIRCUIT,
+                performance=cliff_metrics["performance"], 
+                subfolder=subfolder, 
+                save_image=args.save_img, 
+                title=f"{pruning_method} FLAP {cliff_point} cliff for {args.task}", 
+                save_name=f"{pruning_method}Heatmap"
+            )
+
+        # ---- save pruning_statistics_df, parser and circuit ----
+        if args.save_text:
+            save_parser_information(args, subfolder, f"{pruning_method}_parser_info.json")
+            save_circuit(CIRCUIT, subfolder, name=f"{pruning_method}_circuit.txt")
+            save_panda_to_text(loop_results, out_path=subfolder, name=f"{pruning_method}_result")
+            
+        return CIRCUIT, cliff
+
+
+def loop_over_sparsity_intervall(
+    args, 
+    GT_CIRCUIT,
+    model_hooked:HookedTransformer=None,
+    eval_dataset=None, 
+    ave_logit_gt:float=0, 
+    scores:Float[Tensor, "n_layers n_heads"]=None, 
+    mlp_scores:Float[Tensor, "n_layers n_heads"]=None,
+    mlp_mask:Bool[Tensor, "n_layers n_heads"]=None,
     ):
 
-    results = pd.DataFrame(columns=["size", "sparsity_ratio", "res" "performance", "diff", "TPR", "P"])
+    results = pd.DataFrame(columns=["size", "sparsity_ratio", "ave_logit" "performance", "TPR", "P"])
 
     np.random.seed(args.seed)
     torch.random.manual_seed(args.seed)
-
-    # ------ get circuits ------
-    try:
-        GT_CIRCUIT = choose_PP_circuit(args.task, args.model_name)
-    except:
-        GT_CIRCUIT = {}
-
-    gt_circuit_name =  get_circuit_name(args.task)
-
-    
-    if args.verbose:
-        res_ground_truth = print_statistics(
-            title=f"*********** GT Circuit of {gt_circuit_name} Task **************",
-            ave_logit=gt_circuit_ave_logit, 
-            performance_achieved=gt_circuit_performance,
-            CIRCUIT=GT_CIRCUIT, 
-            IOI_CIRCUIT=GT_CIRCUIT
-            )
-        print(res_ground_truth)
-        
-    ave_logit_old = gt_circuit_ave_logit
-    
-    for i in range(args.lowest_sparsity, args.highest_sparsity):
-        TOTAL_GFLOPS=0
-        args.pruning_ratio = i / 100
+            
+    for i in range(args.lowest_sparsity, args.highest_sparsity, args.step_size):
+        TOTAL_GFLOPS = 0
+        pruning_ratio = i / 100
         CIRCUIT, _ , GFLOPS = CIRCUIT_from_scores(
-            args, 
+            args,
+            pruning_ratio=pruning_ratio,
             attn_metric_list=scores, 
-            W_metric_unstand_list=unstandardized_scores, 
             mlp_metric_list=mlp_scores,
             mlp_mask=mlp_mask, 
             n_layers=model_hooked.cfg.n_layers, 
@@ -170,87 +378,91 @@ def evaluate_sparsity_ratios(
             ave_logit_gt=ave_logit_gt, 
             task=args.task,
             model_name=args.model_name,  
-            epochs = int(args.nsamples /args.batch_size), 
+            epochs = int(args.N /args.batch_size), 
             batch_size = args.batch_size 
             )
         
 
-        diff = ave_logit_old - ave_logit
         recall = TPR(CIRCUIT, GT_CIRCUIT)
         prec = precision(CIRCUIT, GT_CIRCUIT)
         size = circuit_size(CIRCUIT)
 
         if args.verbose:
-            print(f"size: {size}, sparsity_ratio: {args.pruning_ratio}, res: {ave_logit},  performance: {performance}, diff: {diff}, TPR:{recall}, P: {prec}")
+            print(f"size: {size}, sparsity_ratio: {pruning_ratio}, ave_logit: {ave_logit},  performance: {performance}, TPR:{recall}, P: {prec}")
         
-        new_col = pd.DataFrame({"size": size, "sparsity_ratio":args.pruning_ratio, "res": ave_logit, "performance":performance, "diff":diff, "TPR":recall, "P": prec}, index=[0])
+        new_col = pd.DataFrame({"size": size, "sparsity_ratio":pruning_ratio, "ave_logit": ave_logit, "performance":performance, "TPR":recall, "P": prec}, index=[0])
         results = pd.concat([results, new_col], ignore_index=True)
-        ave_logit_old = ave_logit
 
     return results, TOTAL_GFLOPS
 
 
-
 def hybrid_FLAP(
     args,
-    half_life_metric=True, 
+    half_life_metric:bool=True, 
+    GT_CIRCUIT:dict={}, 
     ):    
     """For big models, cuda memory is to limited to have both models on cuda(). This functions alternates between hooked transformer for CIRCUIT evaluation and 
     CasualLM transformer for FLAP.
-
-    Args:
-        args (_type_): _description_
-        half_life_metric (bool, optional): Plot the half-life plots. Defaults to True.
     """
+    
     np.random.seed(args.seed)
     torch.random.manual_seed(args.seed)
-
-        
     torch.cuda.empty_cache()
     gc.collect()
-    epochs = int(args.nsamples / args.batch_size)
-    # ------ load Causual model ------
-    if "gpt2" in args.model_name:
-        model = get_gpt2_adapt_to_llama(args.model_name, args.device)
-        n_layers = model.config.n_layer
-        n_heads =  model.config.n_head
-    elif "Qwen" in args.model_name:
-        model = load_transformer(args.model_name, args.device, cache_dir=args.cache_dir)
-        n_layers = model.config.num_hidden_layers
-        n_heads = model.config.num_attention_heads
     
-    tokenizer = load_tokenizer(args.model_name)
-    
-    
-    num_traversed_layers = 0
-    n_forward_passes = 0
-    INIT_FLOPS = 0
-    INIT_COMP_TIME = 0
+    # ------ initialize ------
+    _, _, epochs = get_model_parameters(args.model_name, args.N, input_batch_size=args.batch_size)
+    circuit_df = {}  # save FLAP circuits {"FLAP_method": {"cliff_point": {CIRCUIT}}}
+
+    num_traversed_layers, n_forward_passes = 0, 0
+    INIT_FLOPS, INIT_COMP_TIME = 0, 0
     y_variable = "performance"
     start_time = time.time() 
     
+    # ------ load Causual model ------
+    if "gpt2" in args.model_name:
+        model = get_gpt2_adapt_to_llama(args.model_name, args.device)
+    elif "Qwen" in args.model_name:
+        model = load_transformer(args.model_name, args.device, cache_dir=args.cache_dir)
+    
+    tokenizer = load_tokenizer(args.model_name)
+    
     # ------ clean and corrupted scores   -----
-    args.metrics = "WIFV"
-    args.difference_with = "None"  
+    pruning_metric = "WIFV"
+    activations = "clean"  
             
-    scores_clean, mlp_scores_clean, mlp_mask_clean, unstandardized_scores_clean, GFLOPS, n_travered_l = head_wise_pruning_scores(args, model, tokenizer)  # clean FLAP scores
+    scores_clean, mlp_scores_clean, mlp_mask_clean, GFLOPS, n_travered_l = head_wise_pruning_scores(
+        args, 
+        model, 
+        tokenizer, 
+        activations=activations,
+        pruning_metrics=pruning_metric
+        )  # clean FLAP scores
+    
     INIT_FLOPS += GFLOPS
     num_traversed_layers += n_travered_l
     
-    args.metrics = "WIFN"
-    args.difference_with = "corrupted"
+    pruning_metric = "WIFN"
+    activations = "contrastive"
     
-    scores_corr, mlp_scores_corr, mlp_mask_corr, unstandardized_scores_corr, GFLOPS, n_travered_l = head_wise_pruning_scores(args, model, tokenizer)  # corrupted FLAP scores
+    scores_corr, mlp_scores_corr, mlp_mask_corr, GFLOPS, n_travered_l = head_wise_pruning_scores(
+        args, 
+        model, 
+        tokenizer,
+        activations=activations,
+        pruning_metrics=pruning_metric
+        )  # corrupted FLAP scores
+
     INIT_FLOPS += GFLOPS
     num_traversed_layers += n_travered_l
     
     INIT_COMP_TIME += time.time() - start_time
-    
+
+
+    # ---- load Hooked model ----    
     del model
     torch.cuda.empty_cache()
     gc.collect()
-    
-    # ---- load Hooked model ----
     model_hooked = load_hooked_transformer(model_name=args.model_name, device=args.device, cache_dir=args.cache_dir)
 
     # ------ get dataset ------
@@ -258,24 +470,22 @@ def hybrid_FLAP(
         model_name=args.model_name,
         task=args.task, 
         tokenizer=tokenizer,  
-        N=args.nsamples, 
+        N=args.N, 
         patching_method="path", 
         device=args.device, 
         seed=args.seed, 
-        prepend_bos=args.prepend_bos
+        prepend_bos=False
         )
+    
     if args.calc_FLOP:
         FLOPS_BY_MODULE = FlopCountAnalysis(model_hooked, eval_dataset.clean_tokens[:args.batch_size, :]).by_module()
-            
         INIT_FLOPS += num_traversed_layers * FLOPS_BY_MODULE["blocks.0"] * epochs
-    # ------ get circuits ------
-    try:
-        GT_CIRCUIT = choose_PP_circuit(args.task, args.model_name)
-    except:
-        GT_CIRCUIT = {}
+    else:
+        FLOPS_BY_MODULE = {}
     
     
     start_time = time.time()
+    
     # ------ ave logit of unpruned model ------
     with torch.no_grad():
         hooked_gt = model_hooked(eval_dataset.clean_tokens)
@@ -289,56 +499,44 @@ def hybrid_FLAP(
         task=args.task, 
         model_name=args.model_name
         )
-
-    # ------ ave logit of gt circuit ------
-    gt_circuit_ave_logit, gt_circuit_performance, _ = batch_evaluate_circiut(
-        model = model_hooked, 
-        CIRCUIT=GT_CIRCUIT,
-        dataset=eval_dataset,
-        ave_logit_gt=ave_logit_gt, 
-        task=args.task,
-        model_name=args.model_name, 
-        epochs = epochs, 
-        batch_size = args.batch_size      
-        )
-    n_forward_passes += 1
     
     # ---- evaluate clean and corrupted scores ----
-    ###### Hooked Transformer
-    args.difference_with = "None"  
-    results_clean, GFLOPS = evaluate_sparsity_ratios(   
-                        args, 
-                        model_hooked=model_hooked,
-                        eval_dataset=eval_dataset, 
-                        ave_logit_gt=ave_logit_gt,
-                        gt_circuit_ave_logit=gt_circuit_ave_logit,
-                        gt_circuit_performance=gt_circuit_performance, 
+    eval_sparsity_intervall_dn = partial(
+        loop_over_sparsity_intervall, 
+        args=args, 
+        GT_CIRCUIT=GT_CIRCUIT,
+        model_hooked=model_hooked,
+        eval_dataset=eval_dataset, 
+        ave_logit_gt=ave_logit_gt
+    )
+    
+    activations = "clean"  
+    clean_sparsity_metrics_df, GFLOPS = eval_sparsity_intervall_dn(   
                         scores=scores_clean, 
-                        unstandardized_scores=unstandardized_scores_clean, 
                         mlp_scores=mlp_scores_clean,
                         mlp_mask=mlp_mask_clean
                         )
-                        
+    
+                
     INIT_FLOPS += GFLOPS
     
-    args.difference_with = "corrupted"
-    results_corr, GFLOPS = evaluate_sparsity_ratios(   
-                        args, 
-                        model_hooked=model_hooked,
-                        eval_dataset=eval_dataset, 
-                        ave_logit_gt=ave_logit_gt,
-                        gt_circuit_ave_logit=gt_circuit_ave_logit,
-                        gt_circuit_performance=gt_circuit_performance, 
+    activations = "contrastive"
+    contr_sparsity_metrics_df, GFLOPS = eval_sparsity_intervall_dn(   
                         scores=scores_corr, 
-                        unstandardized_scores=unstandardized_scores_corr, 
                         mlp_scores=mlp_scores_corr,
                         mlp_mask=mlp_mask_corr, 
                         )
     
     INIT_FLOPS += GFLOPS # FLOPs form FLAP (calculating the metric, standardization...)
+    
     if args.calc_FLOP:
         INIT_FLOPS += n_forward_passes * FLOPS_BY_MODULE[""]  * epochs  # forward pass to get gt and gt_circuit
     INIT_COMP_TIME += time.time() - start_time 
+        
+    pruning_folder = f"{args.out_path}/{args.model_name}/{args.task}/Pruning/"
+    if args.save_text:
+        store_df(clean_sparsity_metrics_df, pruning_folder, "vanilla_sparsity_metrics.xlsx")
+        store_df(contr_sparsity_metrics_df, pruning_folder, "contrastive_sparsity_metrics.xlsx")
     
     del model_hooked
     torch.cuda.empty_cache()
@@ -350,374 +548,97 @@ def hybrid_FLAP(
     elif "Qwen" in args.model_name:
         model = load_transformer(args.model_name, args.device, cache_dir=args.cache_dir)
     
+    
     if args.verbose:
         print("INIT_FLOPS", INIT_FLOPS/1e9)
         print("INIT COMP TIME", INIT_COMP_TIME)    
-        print("INIT_COMP_TIME", INIT_COMP_TIME)    
-    # ---- window size is 10% of the toal amount of values
-    window=round((args.highest_sparsity-args.lowest_sparsity) / 10)
-    average_window = window
-    slope_window=window
-    min_consec=window
-    
-    if args.verbose:
-        print(f"cliff {args.cliff_point} from {args.lowest_sparsity} to {args.highest_sparsity}")
-        print("window", window)
-
-    result_folder =  f"{args.model_name}/{args.task}/Pruning/{args.cliff_point}/sparsity-min_{args.lowest_sparsity}/"
-
-    if args.out_path == "":
-        subfolder = result_folder
-    else:
-        subfolder = args.out_path + result_folder
-
-    create_folder(subfolder)                
-    final_results = pd.DataFrame(columns=["pruning_type", "sparsity_ratio", "size", "ave_logit_diff", "performance", "TPR", "FPR", "half_life", "FLOP", "comp_time"])
     
 
-    #----------------------------------------------------------------------------------------------------
-    #                   FLAP on clean input - WIFV metric
-    #----------------------------------------------------------------------------------------------------
-    if args.calc_FLOP:
-        LOOP_FLOPS_CLEAN = len(range(args.lowest_sparsity, args.highest_sparsity)) *  FLOPS_BY_MODULE[""] * epochs # lowest - highest number of evaluation forward passes - CLEAN
-    else:
-        LOOP_FLOPS_CLEAN = 0
-    start_time = time.time() 
-    
-    args.metrics = "WIFV"
-    args.difference_with = "None"    
-    # ----- Cliff ------
-    results_clean_loop = results_clean[(results_clean["sparsity_ratio"] >= args.lowest_sparsity / 100) & (results_clean["sparsity_ratio"] < args.highest_sparsity / 100)]#.iloc[:, 0].tolist()
-    performance_metric_clean = results_clean_loop[y_variable].tolist()
-    print(performance_metric_clean)
-    max_diff = max(results_clean_loop[y_variable]) - min(results_clean_loop[y_variable])
-    drop_threshold = max_diff / 10 # drop 10% performance of max difference over a window of length x
-    slope_threshold=(max_diff/250) * 0.5 -((10-average_window)/100)
-    slope_threshold=-slope_threshold * 10
-    
-    if args.verbose:
-        print("clean thresholds")
-        print("drop_threshold", drop_threshold)
-        print("slope_threshold", slope_threshold)
 
-    
-    if args.cliff_point=="first":
-        cliff_idx = first_cliff(performance_metric_clean, window=window, drop_threshold=drop_threshold)
-    elif args.cliff_point=="biggest":
-        cliff_idx = biggest_cliff(performance_metric_clean, window=window, drop_threshold=drop_threshold)
-    elif args.cliff_point == "smooth_biggest":
-        performance_metric_clean = moving_average(performance_metric_clean, avg_window=average_window)
-        cliff_idx = biggest_cliff(performance_metric_clean, window=window, drop_threshold=drop_threshold)
-    elif args.cliff_point == "smooth_first":
-        performance_metric_clean = moving_average(performance_metric_clean, avg_window=average_window)
-        cliff_idx = first_cliff(performance_metric_clean, window=window, drop_threshold=drop_threshold)
-    elif args.cliff_point == "fixed":
-        cliff_idx=-1
-    elif args.cliff_point == "detect_cliff":
-        cliff_idx = detect_cliff(performance_metric_clean, slope_window=slope_window, min_consec=min_consec, slope_threshold=slope_threshold)
-    elif args.cliff_point == "smooth_detect_cliff":
-        performance_metric_clean = moving_average(performance_metric_clean, avg_window=average_window)
-        cliff_idx = detect_cliff(performance_metric_clean, slope_window=slope_window, min_consec=min_consec, slope_threshold=slope_threshold)
-    else:
-        raise ValueError(f"Unknown cliff type: {args.cliff_point}")
-
-
-    # ----- Plotting and Saving -----
-
-    if args.save_txt:   
-        store_df(results_clean_loop, subfolder, "clean_table.xlsx")
+    # ---- execute Vanilla and Contrastive FLAPs over all cliff points and save the resulting circuits ----
+    for cliff_point in args.cliff_point_list:
         
-    half_life_sparsity_clean = 0
-    if half_life_metric:
-        half_life = results_clean_loop["TPR"].max()/2 
-        half_life_idx = results_clean_loop[results_clean_loop["TPR"]<=half_life].index.values[0]
-        half_life_sparsity_clean = results_clean_loop["sparsity_ratio"].iloc[half_life_idx]
-        fig = choose_metric_sparsity_plot_function(
-            df1=results_clean_loop, 
-            cliff_value1=half_life_sparsity_clean,
-            y_metric1="TPR", 
-            #title=""
-            title=f"half life - FLAP on {args.task} task"
-            )
+        subfolder = create_folder_structure(args, cliff_point)
         
-        save_img(fig, name=f"half_life_clean", out_path=f"{args.out_path}{args.model_name}/{args.task}/Pruning/half_life")
-
-    if cliff_idx==-1:
-        clean_cliff= 0.75                     
-    else:
-        clean_cliff = results_clean_loop["sparsity_ratio"].iloc[cliff_idx]
-    
-    
-    if args.save_image or args.show:
-        fig = choose_metric_sparsity_plot_function(
-            df1=results_clean_loop, 
-            cliff_value1=clean_cliff,
-            y_metric1="performance", 
-            y_metric2="TPR",
-            title=f"{args.cliff_point} - {args.task} task on {args.metrics} metric"
-            )
-        
-        if args.save_image:
-            print(fig)
-            save_img(fig, name=f"clean_ROC", out_path=subfolder)
-                    
-    if args.verbose:
-        print("cliff at", clean_cliff)
-
-    
-    #----------------------------------------------------------------------------------------------------
-    #                   Get Circuit by Prunning FLAP at cliff sparisity
-    #----------------------------------------------------------------------------------------------------                args.pruning_ratio = clean_cliff
-    args.pruning_ratio = clean_cliff
-    CIRCUIT_CLEAN, scores, GFLOPS, n_traversed_l = prune_flap_modular(args, model, tokenizer)
-    LOOP_FLOPS_CLEAN += GFLOPS
-    if args.calc_FLOP:
-        LOOP_FLOPS_CLEAN += n_traversed_l * FLOPS_BY_MODULE["blocks.0"] * epochs
-    
-    res = results_clean_loop[results_clean_loop["sparsity_ratio"] == clean_cliff].iloc[0]     
-                
-    if args.verbose:
-        res_pruned_model = print_statistics(
-            title="*********** FLAP Circuit vs GT Circuit **************",
-            ave_logit=res["res"], 
-            performance_achieved=res["performance"],
-            CIRCUIT=CIRCUIT_CLEAN, 
-            IOI_CIRCUIT=GT_CIRCUIT,
-            )
-        print(res_pruned_model)
-
-    true_pos_ratio = TPR(CIRCUIT_CLEAN, GT_circuit=GT_CIRCUIT)*100
-    false_pos_ratio = FPR(CIRCUIT_CLEAN, GT_circuit=GT_CIRCUIT)*100
-    
-    LOOP_TIME_CLEAN = time.time() - start_time
-    new_res_col = pd.DataFrame({
-        "pruning_type": "clean",
-        "sparsity_ratio":clean_cliff, 
-        "size": circuit_size(CIRCUIT_CLEAN),
-        "ave_logit_diff":res["res"], 
-        "performance":res["performance"], 
-        "TPR":true_pos_ratio, 
-        "FPR": false_pos_ratio,
-        "half_life": half_life_sparsity_clean,
-        "FLOP": (LOOP_FLOPS_CLEAN/1e9 + INIT_FLOPS/2)/1e9, 
-        "comp_time":  LOOP_TIME_CLEAN + INIT_COMP_TIME/2
-        }, index=[0])
-    final_results = pd.concat([final_results, new_res_col], ignore_index=True)
-
-
-    if args.show or args.save_image:
-        fig = heat_map_pruning(
-            scores, 
+        eval_cliffs_fn = partial(
+            evaluate_FLAP_over_cliff_point,
+            cliff_point=cliff_point,
             GT_CIRCUIT=GT_CIRCUIT,
-            PRUNING_CIRCUIT=CIRCUIT_CLEAN, 
-            title=f"{args.cliff_point} - {args.task} - Clean FLAP",
-            title_pruning_circuit="FLAP",
-            title_gt_circuit="Path Patching",
-            performance=res["performance"],
-            print_scores=False,
-            title_temp_scale=args.metrics)
-            
-        if args.save_image:        
-            save_img(fig, subfolder, "clean_heatmap.png")
-
-    if args.save_txt:
-        save_parser_information(args, subfolder, "clean_parser_info.json")
-
-    if args.save_txt:
-        save_circuit(CIRCUIT_CLEAN, subfolder, name="clean_circuit.txt")
-
-    if args.verbose:
-        print("FLOPS after clean", LOOP_FLOPS_CLEAN/1e9)
-        print("elapsed time for clean loop", LOOP_TIME_CLEAN)
-
-    #----------------------------------------------------------------------------------------------------
-    #                   FLAP on corrupted input - WIFN metric
-    #----------------------------------------------------------------------------------------------------
-    start_time = time.time() 
-    if args.calc_FLOP:
-        LOOP_FLOPS_CORR = len(range(args.lowest_sparsity, args.highest_sparsity)) *  FLOPS_BY_MODULE[""] * epochs # lowest - highest number of evaluation forward passes - ABLATED
-    else:
-        LOOP_FLOPS_CORR = 0
+            INIT_FLOPS=INIT_FLOPS, 
+            INIT_COMP_TIME=INIT_COMP_TIME, 
+            FLOPS_BY_MODULE=FLOPS_BY_MODULE,
+            subfolder=subfolder,
+            model=model,
+            tokenizer=tokenizer,     
+            y_variable=y_variable
+        )
         
-    args.metrics = "WIFN"
-    args.difference_with = "corrupted"
-    
-    # ----- Cliff ------
-    results_corr_loop = results_corr[(results_corr["sparsity_ratio"] >= args.lowest_sparsity / 100) & (results_corr["sparsity_ratio"] < args.highest_sparsity / 100)]
-    performance_metric = results_corr_loop[y_variable].tolist()
-                    
-    max_diff = max(results_corr_loop[y_variable]) - min(results_corr_loop[y_variable])
-    drop_threshold = max_diff / 10  # drop 10% performance of max difference over a window of length x
-    slope_threshold=(max_diff/250) * 0.5 -((10-average_window)/100)
-    slope_threshold=-slope_threshold * 10
-
-    if args.verbose:
-        print("corrupted thresholds")
-        print("drop_threshold", drop_threshold)
-        print("slope_threshold", slope_threshold)
-
-
-    if args.cliff_point=="first":
-        cliff_idx = first_cliff(performance_metric, window=window, drop_threshold=drop_threshold)
-    elif args.cliff_point=="biggest":
-        cliff_idx = biggest_cliff(performance_metric, window=window, drop_threshold=drop_threshold)
-    elif args.cliff_point == "smooth_biggest":
-        performance_metric = moving_average(performance_metric, avg_window=average_window)
-        cliff_idx = biggest_cliff(performance_metric, window=window, drop_threshold=drop_threshold)
-    elif args.cliff_point == "smooth_first":
-        performance_metric = moving_average(performance_metric, avg_window=average_window)
-        cliff_idx = first_cliff(performance_metric, window=window, drop_threshold=drop_threshold)
-    elif args.cliff_point == "fixed":
-        cliff_idx=-1
-    elif args.cliff_point == "detect_cliff":
-        cliff_idx = detect_cliff(performance_metric, slope_window=slope_window, min_consec=min_consec, slope_threshold=slope_threshold)
-    elif args.cliff_point == "smooth_detect_cliff":
-        performance_metric = moving_average(performance_metric, avg_window=average_window)
-        cliff_idx = detect_cliff(performance_metric, slope_window=slope_window, min_consec=min_consec, slope_threshold=slope_threshold)
-    else:
-        raise ValueError(f"Unknown cliff type: {args.cliff_point}")
-
-    # ----- Plotting and Saving -----
-    if args.save_txt:   
-        store_df(results_corr_loop, subfolder, "ablated_table.xlsx")
-    half_life_sparsity_corr = 0
-    
-    if half_life_metric:
-        half_life = results_corr_loop["TPR"].max()/2
-        half_life_idx=results_corr_loop[results_corr_loop["TPR"]<=half_life].index.values[0]
-        half_life_sparsity_corr = results_corr_loop["sparsity_ratio"].iloc[half_life_idx]
-
+        # ------ Vanilla FLAP ------
+        CLEAN_CIRCUIT, clean_cliff = eval_cliffs_fn(
+            args, 
+            pruning_method="Vanilla", 
+            pruning_metric="WIFV",
+            activations="clean",
+            sparsity_metrics_df=clean_sparsity_metrics_df
+        )
+        
+        if circuit_df.get("vanilla") is None:
+            circuit_df["vanilla"] = {cliff_point: CLEAN_CIRCUIT}
+        else:
+            circuit_df["vanilla"][cliff_point] = CLEAN_CIRCUIT
+            
+            
+        # ------ Contrastive FLAP ------
+        CONTR_CIRCUIT, contr_cliff = eval_cliffs_fn(
+            args, 
+            pruning_method="Contrastive", 
+            pruning_metric="WIFN",
+            activations="contrastive",
+            sparsity_metrics_df=contr_sparsity_metrics_df
+        )
+        
+        if circuit_df.get("contrastive") is None:
+            circuit_df["contrastive"] = {cliff_point: CONTR_CIRCUIT}
+        else:
+            circuit_df["contrastive"][cliff_point] = CONTR_CIRCUIT
+        
         fig = choose_metric_sparsity_plot_function(
-            df1=results_corr_loop, 
-            cliff_value1=half_life_sparsity_corr,
-            y_metric2="TPR", 
-            title=f"half life - contrastive FLAP on {args.metrics} task "
-            )
-        save_img(fig, name=f"half_life_corr", out_path=f"{args.out_path}/{args.model_name}/{args.task}/Pruning/half_life")
-        
-    if cliff_idx==-1:
-        corr_cliff = 0.75
-    else:
-        corr_cliff = results_corr_loop["sparsity_ratio"].iloc[cliff_idx]
-    
-    if args.save_image or args.show:                    
-        fig1 = choose_metric_sparsity_plot_function(
-            df1=results_corr_loop, 
-            cliff_value1=corr_cliff,
-            y_metric1="performance", 
-            y_metric2="TPR", 
-            title=f"{args.cliff_point} - {args.task} task on {args.metrics} metric"
-            )
-        if args.save_image:
-            save_img(fig1, name=f"ablated_ROC", out_path=subfolder)
-            
-    if args.verbose:
-        print("cliff at", corr_cliff)
+                df1=contr_sparsity_metrics_df, 
+                cliff_value1=contr_cliff,
+                df2=clean_sparsity_metrics_df, 
+                cliff_value2=clean_cliff,
+                y_metric1="performance", 
+                y_metric2="TPR", 
+                title=f"Vanilla vs Contrastive FLAP: {cliff_point}"
+                )
 
-
-    #----------------------------------------------------------------------------------------------------
-    #                   Get Circuit by running FLAP at cliff sparisity
-    #----------------------------------------------------------------------------------------------------
-    
-    args.pruning_ratio = corr_cliff
-
-    CIRCUIT_ABLATED, scores, GFLOPS, n_traversed_l = prune_flap_modular(args, model, tokenizer)
-    LOOP_FLOPS_CORR += GFLOPS
-    if args.calc_FLOP:
-        LOOP_FLOPS_CORR += n_traversed_l * FLOPS_BY_MODULE["blocks.0"] * epochs
-    
-    res = results_corr_loop[results_corr_loop["sparsity_ratio"] == corr_cliff].iloc[0]                
-    
-    if args.verbose:
-        res_pruned_model = print_statistics(
-            title="*********** FLAP CIrcuit vs GT Circuit **************",
-            ave_logit=res["res"], 
-            performance_achieved=res["performance"],
-            CIRCUIT=CIRCUIT_ABLATED, 
-            IOI_CIRCUIT=GT_CIRCUIT,
-            )
-        print(res_pruned_model)
-
-
-
-    true_pos_ratio = TPR(CIRCUIT_ABLATED, GT_circuit=GT_CIRCUIT)*100
-    false_pos_ratio = FPR(CIRCUIT_ABLATED, GT_circuit=GT_CIRCUIT)*100
-    LOOP_TIME_CORR = time.time() - start_time
-    new_res_col = pd.DataFrame({
-        "pruning_type": "ablate",
-        "sparsity_ratio":corr_cliff, 
-        "size": circuit_size(CIRCUIT_ABLATED),
-        "ave_logit_diff":res["res"], 
-        "performance":res["performance"], 
-        "TPR":true_pos_ratio, 
-        "FPR": false_pos_ratio,
-        "half_life":half_life_sparsity_corr,
-        "FLOP": (LOOP_FLOPS_CORR + INIT_FLOPS/2)/1e9, 
-        "comp_time": LOOP_TIME_CORR + INIT_COMP_TIME/2
-        }, index=[0])
-
-    final_results = pd.concat([final_results, new_res_col], ignore_index=True)
-
-
-    if args.show or args.save_image:
-        fig = heat_map_pruning(
-            scores, 
-            GT_CIRCUIT=GT_CIRCUIT,
-            PRUNING_CIRCUIT=CIRCUIT_ABLATED, 
-            title=f"{args.cliff_point} - {args.task} - contrastive FLAP",
-            title_pruning_circuit="FLAP",
-            title_gt_circuit="Path Patching",
-            title_temp_scale=args.metrics,
-            performance=res["performance"],
-            print_scores=False
-            )
-        fig.show()
-        if args.save_image:
-            save_img(fig, subfolder, "contrastive_heatmap.png")
-            
-    if args.save_image:
-        fig = choose_metric_sparsity_plot_function(
-            df1=results_clean_loop, 
-            cliff_value1=clean_cliff,
-            df2=results_corr_loop, 
-            cliff_value2=corr_cliff,
-            y_metric1="performance", 
-            y_metric2="TPR", 
-            title="Cliff Points"
-            )
-        
-        if args.save_image:    
+        if args.save_img:    
             save_img(fig, name=f"both_curves", out_path=subfolder)
-
-    if args.save_txt:
-        save_parser_information(args, subfolder, "contrastive_parser_info.json")
-    
-    if args.save_txt:
-        save_circuit(CIRCUIT_ABLATED, subfolder, name="contrastive_circuit.txt")
-
-    if args.verbose:
-        print("FLOPS after corrupted", LOOP_FLOPS_CORR/1e9)
-        print("elapsed time for loop", LOOP_TIME_CORR)
         
-    if half_life_metric:        
+    # ---- Experiment: Half-life metric -----
+    if half_life_metric:      
+
+        half_life_sparsity_clean = half_life_value(args, clean_sparsity_metrics_df, "half_life_vanilla") 
+        half_life_sparsity_contr = half_life_value(args, contr_sparsity_metrics_df, "half_life_vanilla")
+
         fig_two_TP = choose_metric_sparsity_plot_function(
-            df1=results_clean_loop, 
+            df1=clean_sparsity_metrics_df, 
             cliff_value1=half_life_sparsity_clean,
-            df2=results_corr_loop, 
-            cliff_value2=half_life_sparsity_corr,
+            df2=contr_sparsity_metrics_df, 
+            cliff_value2=half_life_sparsity_contr,
             y_metric1="TPR", 
             title=""
-            #title=f"half life - {args.task} task"
             )
         
-        
-        save_img(fig_two_TP, f"{args.out_path}/{args.model_name}/{args.task}/Pruning/half_life", args.task + "_two_TP.png")    
+        if args.save_img:
+            save_img(fig_two_TP, f"{args.out_path}/{args.model_name}/{args.task}/Pruning/half_life", args.task + "_two_TP.png")    
+
+    return circuit_df
 
 
 if __name__ == "__main__":
     
     args = parser.parse_args()
-    print(args)
     hybrid_FLAP(
         args=args,
         half_life_metric=False

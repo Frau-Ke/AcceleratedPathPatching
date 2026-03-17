@@ -469,4 +469,4 @@ def print_statistics(title, ave_logit, performance_achieved, CIRCUIT, IOI_CIRCUI
 
     if performance_gain is not None:
         text = text + f"performance gain {performance_gain:.2f}% \n \n"
-    return "\n \n" + text
+    return text

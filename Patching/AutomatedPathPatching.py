@@ -14,7 +14,7 @@ from utils.metrics import ave_logit_diff
 from utils.eval_circuit import *
 from circuits.circuits_PP import *
 from circuits.circuits_FLAP import * 
-from Patching.parser import parser
+from utils.parser import parser
 import pickle
 from utils.model_loader import load_tokenizer, load_hooked_transformer
 from utils.dataset_loader import predict_target_token
@@ -29,18 +29,20 @@ t.autograd.set_grad_enabled(False)
 
 def automated_PP(
     args,
-    resid_importance_threshold=2
+    resid_importance_threshold=2, 
+    INPUT_PRUING_CIRCUIT=None
 ):
-    
-    if args.pruning_circuit == "none":    
-        PRUNING_CIRCUIT = None
-    elif args.pruning_circuit == "hybrid": 
-        print("choosing circuits")
-        PRUNING_CIRCUIT = choose_hybrid_FLAP_circuit(args.task, args.model_name)
-    elif args.pruning_circuit == "contrastive": 
-        PRUNING_CIRCUIT = choose_contrastive_FLAP_circuit(args.task, args.model_name)
+    if INPUT_PRUING_CIRCUIT == None:
+        if args.pruning_circuit == "none":    
+            PRUNING_CIRCUIT = None
+        elif args.pruning_circuit == "hybrid": 
+            PRUNING_CIRCUIT = choose_hybrid_FLAP_circuit(args.task, args.model_name)
+        elif args.pruning_circuit == "contrastive": 
+            PRUNING_CIRCUIT = choose_contrastive_FLAP_circuit(args.task, args.model_name)
+        else:
+            PRUNING_CIRCUIT = choose_vanilla_FLAP_circuit(args.task, args.model_name)
     else:
-        PRUNING_CIRCUIT = choose_vanilla_FLAP_circuit(args.task, args.model_name)
+        PRUNING_CIRCUIT = INPUT_PRUING_CIRCUIT 
 
     pp = PathPatching(
         model_name=args.model_name, 

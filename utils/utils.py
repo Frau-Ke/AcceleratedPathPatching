@@ -148,6 +148,28 @@ def print_pretty(circle_heads:dict):
     for (key, value) in circle_heads.items():
         print(f"{key} : {value}")
         
+def get_model_parameters(model_name, N, input_batch_size=-1):
+
+    if model_name=="gpt2":
+        total_model_size = 144
+        batch_size=200
+    elif model_name=="gpt2-large":
+        total_model_size=720
+        batch_size=100
+    elif model_name=="Qwen/Qwen2.5-0.5B":
+        total_model_size=336
+        batch_size=200
+    elif model_name == "Qwen/Qwen2.5-7B":
+        total_model_size=784
+        batch_size=40
+    
+    if input_batch_size > 0:
+        batch_size = input_batch_size
+    
+    epochs = int(N /batch_size)
+    return total_model_size, batch_size, epochs
+
+
 
 #----------------------------------------------------------------------------------------------------
 # read ACDC graphs 

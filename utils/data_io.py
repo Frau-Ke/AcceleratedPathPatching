@@ -20,7 +20,7 @@ def create_folder(path):
 def store_df(df, out_path, name):
     create_folder(out_path)
 
-    file_path =  os.path.join(out_path, name)
+    file_path = os.path.join(out_path, name)
     if file_path.endswith(".csv"):
         df.to_csv(file_path, index=False)
     elif file_path.endswith(".xlsx"):
@@ -50,9 +50,8 @@ def read_df(in_path, name):
 def save_panda_to_text(df, out_path, name):
     create_folder(out_path)
     file_path = os.path.join(out_path, name)
-    if file_path.exists():
-        file_path.unlink()
-    with open(file_path, 'a') as f:
+
+    with open(file_path, 'w') as f:
         f.write(df.to_string(header=False, index=False)) 
 
 
@@ -78,7 +77,6 @@ def load_circuit(out_path, name):
 
 
 def save_img(fig, out_path, name):
-    print("saving image")
     create_folder(out_path)
     file_path =  os.path.join(out_path, name)
     fig.savefig(file_path, bbox_inches='tight')
