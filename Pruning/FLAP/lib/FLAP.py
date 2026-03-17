@@ -634,12 +634,3 @@ def hybrid_FLAP(
             save_img(fig_two_TP, f"{args.out_path}/{args.model_name}/{args.task}/Pruning/half_life", args.task + "_two_TP.png")    
 
     return circuit_df
-
-
-if __name__ == "__main__":
-    
-    args = parser.parse_args()
-    hybrid_FLAP(
-        args=args,
-        half_life_metric=False
-    )
