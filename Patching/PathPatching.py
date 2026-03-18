@@ -35,7 +35,6 @@ class PathPatching(TaskInterface):
         self, 
         model_name: str, 
         task: str, 
-        patching_method:str, 
         metric_name:str,  
         N:int, 
         model=None,
@@ -43,7 +42,7 @@ class PathPatching(TaskInterface):
         device="cpu", 
         patch_mlp=False, 
         seed=1234,
-        calc_FLOPS = True, 
+        calc_FLOP = True, 
         prepend_bos=False,
         cache_dir="llm_weights"
         ) -> None:
@@ -51,7 +50,7 @@ class PathPatching(TaskInterface):
         super().__init__(
             model_name=model_name,
             task=task, 
-            patching_method=patching_method, 
+            patching_method="path", 
             metric_name=metric_name,
             N=N,
             model=model, 
@@ -59,7 +58,7 @@ class PathPatching(TaskInterface):
             device=device, 
             patch_mlp=patch_mlp, 
             seed=seed, 
-            calc_FLOPS=calc_FLOPS, 
+            calc_FLOP=calc_FLOP, 
             prepend_bos=prepend_bos,
             cache_dir=cache_dir
             )
@@ -204,7 +203,7 @@ class PathPatching(TaskInterface):
             # Save the results
             results[layer, head] = self.metric(logits=resid_unembedded)    
 
-        if self.calc_FLOPS:
+        if self.calc_FLOP:
             FLOP_per_forward_pass = self.FLOPS_till_layer(self._model.cfg.n_layers)
             self.n_forward_passes += n_forward_passes
             self.FLOP_counter += FLOP_per_forward_pass * n_forward_passes
@@ -302,7 +301,7 @@ class PathPatching(TaskInterface):
             # Save the results
             results[sender_layer, sender_head] = self.metric(logits=patched_logits)    
             
-        if self.calc_FLOPS:
+        if self.calc_FLOP:
             FLOP_per_forward_pass = self.FLOPS_till_layer(max(receiver_layers))
             self.n_forward_passes += n_forward_passes
             self.FLOP_counter += FLOP_per_forward_pass * n_forward_passes

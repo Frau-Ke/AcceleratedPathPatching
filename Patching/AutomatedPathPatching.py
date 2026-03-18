@@ -47,13 +47,12 @@ def automated_PP(
     pp = PathPatching(
         model_name=args.model_name, 
         task=args.task, 
-        patching_method=args.patching_method, 
         metric_name=args.metric, 
         N=args.N, 
         device=args.device, 
         patch_mlp=args.patch_mlp,
         seed=args.seed, 
-        calc_FLOPS=args.calc_FLOPS, 
+        calc_FLOP=args.calc_FLOP, 
         cache_dir=args.cache_dir
     )
 
@@ -61,7 +60,7 @@ def automated_PP(
     
     # ----- create folder structure -----
     if args.pruning_circuit == "none":    
-        result_folder = f"{args.model_name}/{args.task}/{args.patching_method}/automatic/maxVal-{args.min_value_threshold}/importance-{args.importance_threshold}"
+        result_folder = f"{args.model_name}/{args.task}/path/automatic/maxVal-{args.min_value_threshold}/importance-{args.importance_threshold}"
     elif args.pruning_circuit == "hybrid":    
         result_folder = f"{args.model_name}/{args.task}/APP/maxVal-{args.min_value_threshold}/importance-{args.importance_threshold}"
     else:

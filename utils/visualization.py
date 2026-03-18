@@ -930,7 +930,7 @@ def pareto(
                             knee_idx = grad_idx
 
             best_point = df_pareto.iloc[knee_idx]
-
+            print(best_point)
             #best_point = df_task[df_task["performance"] >= df_task["performance"].mean()].sort_values(by=["size", "performance"], ascending = [True, False]).iloc[0]
 
 
@@ -951,7 +951,7 @@ def pareto(
         
         if save_image:
             save_img(fig, out_path=out_path, name=f"pareto_{task}.png")
-            
+    return best_point
 
 #----------------------------------------------------------------------------------------------------
 # Circuit Analysis - Recall/Precicion Venn Diagram
