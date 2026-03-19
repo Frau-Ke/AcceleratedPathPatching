@@ -28,7 +28,7 @@ class TaskInterface:
         seed:int=1234, 
         device:str="cpu", 
         patch_mlp = False,
-        calc_FLOPS = True, 
+        calc_FLOP = True, 
         prepend_bos = False,
         cache_dir="llm_weights"
         ) -> None:
@@ -45,7 +45,7 @@ class TaskInterface:
         self.seed=seed
         
         # metrics: FLOP, Runtime
-        self.calc_FLOPS = calc_FLOPS
+        self.calc_FLOP = calc_FLOP
         self.FLOP_counter = 0
         self.n_forward_passes = 0
         self.elapsed_time = 0
@@ -100,7 +100,7 @@ class TaskInterface:
             model_name=self.model_name,
             )   
         
-        if self.calc_FLOPS:
+        if self.calc_FLOP:
             FLOP_per_forward_pass = FlopCountAnalysis(self._model, self.clean_tokens)
             print("FLOP per forwad", FLOP_per_forward_pass)
             self.module_FLOPS = FLOP_per_forward_pass.by_module()

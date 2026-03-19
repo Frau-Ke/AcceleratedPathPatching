@@ -13,7 +13,6 @@ import gc
     'IFV': Input Feature Variance               -> 0 FLOPS
     'WIFV': Weighted Input Feature Variance     -> 2 * weight.X * weights.Y (elementwise multiplication, add collums) + fluc_inp.numel() (mutliply)
     'WIFN': Weighted Input Feature Norm         -> weight.X * weights.Y (abs) + weights.Y (sqrt) +  weight.x * weight.y (mutliplication matrix, elementwise vector) + weight.X * weight.y (mean)
-                                                -> 3 * weight.X * weight.Y + +
 """
 metrics = {
     'IFV': lambda wrapped_layers, subset, name: wrapped_layers[name].fluc_inp,
@@ -45,7 +44,7 @@ def find_layers(module, layers=[nn.Linear], name=''):
     return res
 
 
-def prepare_calibration_input(nsamples, model, dataloader, device,  difference_with="None"):
+def prepare_calibration_input(nsamples, model, dataloader, device,  activations="None"):
     """
     Prepare inputs for model calibration. 
     
@@ -71,8 +70,8 @@ def prepare_calibration_input(nsamples, model, dataloader, device,  difference_w
     dtype = next(iter(model.parameters())).dtype
     inps = torch.zeros((nsamples, model.seqlen, model.config.hidden_size), dtype=dtype, device=device)
     inps.requires_grad = False
-    #cache = {'i': 0, 'attention_mask': torch.tensor([], device=device), "position_ids": None}
     cache = {'i': 0,  'attention_mask': torch.tensor([], device=device, dtype=torch.bool), "position_ids": None}
+    
     # FLOPS: unembeddding
     class Catcher(nn.Module):
         
@@ -99,7 +98,7 @@ def prepare_calibration_input(nsamples, model, dataloader, device,  difference_w
     if "Qwen" in model.__class__.__name__:
         layers[0].attention_type = layers[0].module.attention_type
         
-    if difference_with == "corrupted":
+    if activations == "contrastive":
         tokens = dataloader.corrupted_tokens
     else:
         tokens = dataloader.clean_tokens
@@ -152,14 +151,15 @@ def forward_pass_with_hook(layer, wrapped_layers, subset, inps, outs, attention_
 
     
 
-def head_wise_pruning_scores(args, model, tokenizer, outlier_heads=[]):
+def head_wise_pruning_scores(args, model, tokenizer, activations, pruning_metrics):
     # FLOPs are calculated as follows:
         # one complete forward pass through the model (embedding, unembedding, attn, mlp, ...)
-        #   or two in case of corrupted activations
+        # or two in case of corrupted activations
         # for each layer: calculation in BiasGPT: 1 x mean = inp.numel()
         #                                      - if WIFN: norm = 2 x inp.numel()
         #                                      - else: sum = 1 x inp.numel()                           
         # Metric for each z weight matrix of each layer
+        
     use_cache = model.config.use_cache 
     model.config.use_cache = False 
     
@@ -168,18 +168,19 @@ def head_wise_pruning_scores(args, model, tokenizer, outlier_heads=[]):
     dataset = load_dataset(
         task=args.task, 
         tokenizer=tokenizer, 
-        N=args.nsamples, 
+        N=args.N, 
         device=args.device, 
         seed=args.seed, 
-        prepend_bos=args.prepend_bos, 
+        prepend_bos=False, 
         model_name=args.model_name, 
         remove_target_token=False
         )
         
     model.seqlen = dataset.max_len
     num_traversed_layers = 0
+    
     with torch.no_grad():
-        inps, outs, attention_mask, position_ids, position_embeddings = prepare_calibration_input(args.nsamples, model, dataset, args.device)
+        inps, outs, attention_mask, position_ids, position_embeddings = prepare_calibration_input(args.N, model, dataset, args.device)
 
     if "Qwen" in args.model_name:
         position_embeddings = model.model.rotary_emb(inps[0].unsqueeze(0), position_ids)
@@ -189,9 +190,9 @@ def head_wise_pruning_scores(args, model, tokenizer, outlier_heads=[]):
         #FLOPS += FlopCountAnalysis(model, dataset.corrupted_tokens).total()  # FLOPS for the forward pass on corrupted input
     
  
-    if args.difference_with == "corrupted":
+    if activations == "contrastive":
         with torch.no_grad():
-            inps_diff, outs_diff, _, _, _= prepare_calibration_input(args.nsamples, model, dataset, args.device, difference_with=args.difference_with)        
+            inps_diff, outs_diff, _, _, _= prepare_calibration_input(args.N, model, dataset, args.device, activations=activations)        
         
         if args.calc_FLOP:
             num_traversed_layers += 1
@@ -201,7 +202,6 @@ def head_wise_pruning_scores(args, model, tokenizer, outlier_heads=[]):
     attn_metric_list, mlp_metric_list = [], []
     attn_baseline_inp_list = []
     mlp_mask = []
-    W_metric_unstand_list  = []
     num_heads = model.config.num_attention_heads
     hidden_size = model.config.hidden_size
     head_dim = hidden_size // num_heads
@@ -214,7 +214,7 @@ def head_wise_pruning_scores(args, model, tokenizer, outlier_heads=[]):
 
         subset.update({'self_attn.o_proj': find_layers(layer)['self_attn.o_proj']})
         
-        if args.use_mlp:
+        if args.patch_mlp:
             subset.update({'mlp.down_proj': find_layers(layer)['mlp.down_proj']})
 
         if f"model.layers.{i}" in getattr(model, 'hf_device_map', {}):   ## handle the case for llama-30B and llama-65B, when the device map has multiple GPUs;
@@ -224,7 +224,7 @@ def head_wise_pruning_scores(args, model, tokenizer, outlier_heads=[]):
         
         wrapped_layers = {}
         for name in subset:
-                wrapped_layers[name] = BiasGPT(subset[name], args.metrics)#, dataset.start, dataset.end)    
+                wrapped_layers[name] = BiasGPT(subset[name], pruning_metrics)#, dataset.start, dataset.end)    
 
         # FLOPS: Forward pass through one layer
         outs = forward_pass_with_hook(
@@ -237,15 +237,15 @@ def head_wise_pruning_scores(args, model, tokenizer, outlier_heads=[]):
             position_ids=position_ids,
             position_embeddings=position_embeddings,
             device=args.device,
-            nsamples=args.nsamples
+            nsamples=args.N
             )
         num_traversed_layers +=1
 
         # use as new scores score(clean) - score(corrupted) 
-        if not args.difference_with == "None":
+        if not activations == "clean":
             corr_wrapped_layers = {}
             for name in subset:
-                corr_wrapped_layers[name] = BiasGPT(subset[name], args.metrics)#, dataset.start, dataset.end)    
+                corr_wrapped_layers[name] = BiasGPT(subset[name], pruning_metrics)#, dataset.start, dataset.end)    
                   
             outs_diff = forward_pass_with_hook(
                 layer=layer, 
@@ -257,7 +257,7 @@ def head_wise_pruning_scores(args, model, tokenizer, outlier_heads=[]):
                 position_ids=position_ids,
                 position_embeddings=position_embeddings,
                 device=args.device,
-                nsamples=args.nsamples
+                nsamples=args.N
                 )
             num_traversed_layers +=1
 
@@ -267,33 +267,27 @@ def head_wise_pruning_scores(args, model, tokenizer, outlier_heads=[]):
                 # FLOPS for one mean calculation during Forward pass
                 if args.calc_FLOP:
                     FLOPS += inps.numel()  
-                    
                      
-                W_metric = metrics[args.metrics](wrapped_layers, subset, name) ** 2
-                W_metrc_heads = W_metric.reshape(1, -1, head_dim).mean(dim=2)  # shape [12, 12]
+                W_metric = metrics[pruning_metrics](wrapped_layers, subset, name) ** 2
 
-                if args.difference_with == "corrupted":
-                    W_metric_corr = metrics[args.metrics](corr_wrapped_layers, subset, name) ** 2
+                if activations == "contrastive":
+                    W_metric_corr = metrics[pruning_metrics](corr_wrapped_layers, subset, name) ** 2
                     W_metric = torch.abs(W_metric - W_metric_corr)
-                    
-                    W_metrc_corr_heads = W_metric_corr.reshape(1, -1, head_dim).mean(dim=2)  # shape [12, 12]
-                    W_metrc_heads = W_metric.reshape(1, -1, head_dim).mean(dim=2)  # shape [12, 12]
-
+                        
                 if args.calc_FLOP:
-                    if args.metrics == "WIFN":
+                    if pruning_metrics == "WIFN":
                         # FLOPs for norm calculation
                         FLOPS += 2 * inps.numel()  # norm = 2 x inp.numel()
                         # FLOPs for WIFN metric
                         FLOPS += 3 * subset[name].weight.data.numel() + subset[name].weight.data.shape[1]
                     
-                    elif args.metrics == "WIFV":
+                    elif pruning_metrics == "WIFV":
                         FLOPS += inps.numel()  # sum = inp.numel()
                         # FLOPS for WIFV metric
                         FLOPS += 2 * subset[name].weight.data.numel() +  wrapped_layers[name].fluc_inp.numel() 
                     else:
                         FLOPS += inps.numel()  # sum = inp.numel()
                 
-                W_metric_unstand_list.append(W_metric.reshape(-1, head_dim).mean(dim=1))
                 attn_metric_list.append(W_metric.cpu())
                 
                 if next(model.parameters()).is_cuda: # when cuda use half precision
@@ -302,11 +296,11 @@ def head_wise_pruning_scores(args, model, tokenizer, outlier_heads=[]):
                     attn_baseline_inp_list.append(wrapped_layers[name].baseline_inp.type(torch.float32))
             
             wrapped_layers[name].free()
-            if not args.difference_with == "None":
+            if not activations == "clean":
                 corr_wrapped_layers[name].free()
             
         inps, outs = outs, inps # Use the original output as input to the next layer
-        if not args.difference_with == "None":
+        if not activations == "clean":
             inps_diff, outs_diff = outs_diff, inps_diff
         torch.cuda.empty_cache()
 
@@ -315,13 +309,13 @@ def head_wise_pruning_scores(args, model, tokenizer, outlier_heads=[]):
     torch.cuda.empty_cache()
     gc.collect()
     
-    return attn_metric_list, mlp_metric_list, mlp_mask, W_metric_unstand_list, FLOPS, num_traversed_layers
+    return attn_metric_list, mlp_metric_list, mlp_mask, FLOPS, num_traversed_layers
 
 
 def CIRCUIT_from_scores(
     args, 
+    pruning_ratio:float,
     attn_metric_list,
-    W_metric_unstand_list, 
     mlp_metric_list=None,
     mlp_mask=None,
     FLOPS=0,
@@ -347,7 +341,7 @@ def CIRCUIT_from_scores(
 
         attn_metric = attn_metric.reshape(n_layers, -1, head_dim).mean(dim=2)  # shape [12, 12]
         
-        if args.use_mlp:
+        if args.patch_mlp:
             mlp_metric = torch.stack(mlp_metric_list)
             mlp_metric = standarlization(mlp_metric)
         
@@ -358,7 +352,7 @@ def CIRCUIT_from_scores(
             
         
         else:
-            if args.use_mlp:
+            if args.patch_mlp:
                 prune_metric = torch.cat([attn_metric.view(-1), mlp_metric.view(-1)])
             else:
                 prune_metric = attn_metric.view(-1)
@@ -366,9 +360,9 @@ def CIRCUIT_from_scores(
             sorted_prune, indices = torch.sort(prune_metric, descending=True)
             compression_weight = torch.ones_like(indices)
             compression_weight[indices < attn_metric.numel()] = 512.0 / 3
-            threshold = sorted_prune[torch.argmin(torch.abs(torch.cumsum(compression_weight, 0) - torch.sum(compression_weight)*(1 - args.pruning_ratio)))]
+            threshold = sorted_prune[torch.argmin(torch.abs(torch.cumsum(compression_weight, 0) - torch.sum(compression_weight)*(1 - pruning_ratio)))]
             attn_mask = (attn_metric > threshold)
-            if args.use_mlp:
+            if args.patch_mlp:
                 mlp_mask = (mlp_metric > threshold)
                 
     elif args.structure in ["UL-UM", "UL-MM"]:
@@ -381,14 +375,14 @@ def CIRCUIT_from_scores(
 
             attn_metric[layer_idx] = W_metric
             if args.structure == "UL-UM":
-                thresh = torch.sort(W_metric.cuda())[0][int(args.pruning_ratio*n_heads)].cpu() 
+                thresh = torch.sort(W_metric.cuda())[0][int(pruning_ratio*n_heads)].cpu() 
             else:
                 thresh = torch.sort(W_metric.cuda())[0][args.remove_heads // n_layers].cpu()
             W_mask = (W_metric>=thresh)
             attn_mask.append(W_mask)
             
         attn_mask = torch.stack(attn_mask) 
-        if args.use_mlp:
+        if args.patch_mlp:
             mlp_mask = torch.stack(mlp_mask)
     
     # STEP 3: Adaptive Strucutre Search: search model globally to compress the model 
@@ -400,23 +394,24 @@ def CIRCUIT_from_scores(
     
     
     
-def prune_flap_modular(args, model, tokenizer, outlier_heads=[]):
+def prune_flap_modular(args, pruning_ratio, model, tokenizer, activations, pruning_metric):
     layers = model.model.layers
     num_heads = model.config.num_attention_heads
     hidden_size = model.config.hidden_size
     head_dim = hidden_size // num_heads
     
-    attn_metric_list, mlp_metric_list, mlp_mask, W_metric_unstand_list, FLOPS, n_traversed_layers = head_wise_pruning_scores(
+    attn_metric_list, mlp_metric_list, mlp_mask, FLOPS, n_traversed_layers = head_wise_pruning_scores(
         args, 
         model, 
         tokenizer, 
-        outlier_heads
+        activations=activations,
+        pruning_metrics=pruning_metric,
         )
 
     CIRCUIT, attn_metric, FLOPS = CIRCUIT_from_scores(
         args=args, 
+        pruning_ratio=pruning_ratio,
         attn_metric_list=attn_metric_list, 
-        W_metric_unstand_list=W_metric_unstand_list, 
         mlp_metric_list=mlp_metric_list, 
         mlp_mask=mlp_mask, 
         FLOPS=FLOPS, 

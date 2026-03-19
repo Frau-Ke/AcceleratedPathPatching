@@ -3,7 +3,41 @@ from torch import Tensor
 from torch.nn import functional as F
 from jaxtyping import Float, Int, Bool
 from typing import List, Optional, Callable, Tuple, Dict, Literal, Set, Union
-        
+   
+   
+#----------------------------------------------------------------------------------------------------   
+# Accuracy
+#----------------------------------------------------------------------------------------------------
+def accuracy(
+    logits: Float[Tensor, "batch seq d_vocab"],
+    correct_answers: Union[Int[Tensor, "batch 1"], Dict],
+    wrong_answers: Union[Int[Tensor, "batch 1"], Dict],
+    target_idx: Optional[Int[Tensor, "batch 2"]],
+    top_k=1,
+    ):
+    batch_size = correct_answers.size(0)
+    target_logits = logits[target_idx[:, 0], target_idx[:, 1]]    
+    probs = t.softmax(target_logits, dim=-1)
+    _, top_idx = t.topk(probs, k=top_k)
+    top_prediction=top_idx
+    if len(correct_answers.shape) == 1:
+        top_prediction = top_idx.squeeze()
+        # IOI, Induction,
+        # exactly one correct answer
+        return sum(correct_answers[i] in top_prediction[i] for i in range(batch_size))/batch_size
+    elif len(correct_answers.shape) == 2:
+        # GreaterThan
+        count=0
+        for i in range(batch_size):
+           for j in range(top_k):
+               if top_prediction[i, j] in correct_answers[i]:
+                   count +=1
+                   break 
+        return count / batch_size
+               
+       
+    
+
 #----------------------------------------------------------------------------------------------------   
 # Logit Difference
 #----------------------------------------------------------------------------------------------------
@@ -44,8 +78,6 @@ def ave_logit_diff(
             logits=logits, 
             correct_answer_tokens=correct_answers,
             wrong_answer_tokens=wrong_answers,
-            target_idx=target_idx, 
-            model_name=model_name,
         )
         
     else:
