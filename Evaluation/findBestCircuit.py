@@ -17,7 +17,7 @@ def pareto_analysis(
     df:pd.DataFrame,
     x_metric:str="size",
     y_metric:str="performance",
-    min_performance:int=75, 
+    min_performance:int=float("inf"), 
     max_circuit_size:int=float("inf"),
     focus_on_performance=False,
     method_name:str="PP"
@@ -145,7 +145,78 @@ def pareto_analysis(
                 print(f"save df at {args.out_path}/{args.model_name}/results/{method_name}/{method_name}_df.txt")
                 f.write(df.to_string(header=False, index=False))
 
-    return best_point
+    return best_point, pareto
+
+
+def find_best_PP_circuit(args, circuits_dict:dict, GT_CIRCUIT):
+    _, _, epochs = get_model_parameters(args.model_name, args.N, input_batch_size=args.batch_size)
+    tokenizer = load_tokenizer(args.model_name)
+    model_hooked = load_hooked_transformer(args.model_name, device=args.device, cache_dir=args.cache_dir)
+
+    # directory to Path Patching
+    PP_df_results = pd.DataFrame(columns=["task", "maxValue", "importance", "performance", "accuracy", "size", "TPR", "P"])
+    
+    if GT_CIRCUIT is None:_
+    directory = f"{args.out_path}/{args.model_name}/{args.task}/path/automatic"  
+ 
+    eval_dataset = load_dataset(
+        prepend_bos=False,
+        task=args.task, 
+        patching_method="path",
+        tokenizer=tokenizer, 
+        N=args.N, 
+        device=args.device,
+        model_name=args.model_name,
+        seed=args.seed
+    )
+
+    # ----- Average Logit Difference of the unpatched Model -----
+    with torch.no_grad():
+        logits_gt = model_hooked(eval_dataset.clean_tokens)
+        
+    ave_logit_gt = ave_logit_diff(
+        logits=logits_gt, 
+        correct_answers=eval_dataset.correct_answers, 
+        wrong_answers=eval_dataset.wrong_answers,
+        target_idx=eval_dataset.target_idx.to(args.device), 
+        task=args.task,
+        model_name=args.model_name
+        )
+    
+    for ma in args.min_value_threshold:
+        for s in args.importance_threshold:
+            CIRCUIT = circuits_dict[ma][s]
+            size = circuit_size(CIRCUIT)            
+            _, performance, acc = batch_evaluate_circiut(
+                model = model_hooked, 
+                CIRCUIT=CIRCUIT,
+                dataset=eval_dataset,
+                ave_logit_gt=ave_logit_gt,
+                task=args.task,
+                model_name=args.model_name, 
+                epochs = epochs, 
+                batch_size = args.batch_size 
+            )    
+            
+            TP_ratio = TPR(CIRCUIT, GT_CIRCUIT)
+            prec = precision(CIRCUIT, GT_CIRCUIT)
+            
+            new_row = pd.DataFrame({
+                "task": [args.task],
+                "maxValue": [ma],
+                "importance": [s],
+                "performance": [performance], 
+                "accuracy": [acc],
+                "size": [size], 
+                "TPR": [TP_ratio], 
+                "P": [prec]
+            }) 
+            PP_df_results = pd.concat([PP_df_results, new_row],  ignore_index=True)
+
+    if args.save_text:
+        store_df(PP_df_results, out_path=directory, name="results_pp.json")         
+          
+    return PP_df_results
 
 
 def find_best_hybridFLAP_circuit(args, circuits_dict:dict, GT_CIRCUIT):
@@ -153,6 +224,8 @@ def find_best_hybridFLAP_circuit(args, circuits_dict:dict, GT_CIRCUIT):
     _, _, epochs = get_model_parameters(args.model_name, args.N, input_batch_size=args.batch_size)
     tokenizer = load_tokenizer(args.model_name)
     model_hooked = load_hooked_transformer(args.model_name, device=args.device, cache_dir=args.cache_dir)
+    df_results = pd.DataFrame(columns=["task", "vanilla", "contrastive", "performance", "accuracy", "size", "TPR", "P"])
+
 
     # directory to Path Patching
     directory = f"{args.out_path}/{args.model_name}/{args.task}/Pruning" 
@@ -204,7 +277,7 @@ def find_best_hybridFLAP_circuit(args, circuits_dict:dict, GT_CIRCUIT):
             TP_ratio = TPR(CIRCUIT, GT_CIRCUIT)
             prec = precision(CIRCUIT, GT_CIRCUIT)
 
-            df_results = pd.DataFrame({
+            new_row = pd.DataFrame({
                 "task": [args.task],
                 "vanilla": [p1],
                 "contrastive": [p2],
@@ -214,8 +287,7 @@ def find_best_hybridFLAP_circuit(args, circuits_dict:dict, GT_CIRCUIT):
                 "TPR": [TP_ratio], 
                 "P":[prec]
             }) 
-            
-            
+            df_results = pd.concat([df_results, new_row],  ignore_index=True)
 
         if args.save_text:
             store_df(df_results, out_path=directory, name="results_hybridFLAP.json")           

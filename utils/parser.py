@@ -40,11 +40,14 @@ add_args(
 
 add_args("--cache_dir", type=str, default=os.getcwd, help="place to cache model weights" )
 add_args("--out_path", default="", type=str)
-
 add_args("--device", default="cuda", choices = ["cpu", "cuda"], type=str)
+
+
 add_args("--N", type=int, default=100)
 add_args("--batch_size", type=int, default=100)
 add_args("--seed", default=1234, type=int)
+add_args("--eval_N", type=int, default=200)
+add_args("--eval_batch_size", type=int, default=200)
 add_args("--eval_seed", default=193485603, type=int)
 
 
@@ -53,8 +56,8 @@ add_args("--calc_FLOP", action="store_true", help="if true, calculate FLOPs")
 
 
 # Automated Path Patching
-add_args("--importance_threshold", default=0, type=float, help="scale * STD is importance threshold")
-add_args("--min_value_threshold", default=0, type=float, help="ignore all heads if max activation is below min_activation_threshold")
+add_args("--importance_threshold", nargs="+", default=[0], type=float, help="scale * STD is importance threshold")
+add_args("--min_value_threshold", nargs="+", default=[0], type=float, help="ignore all heads if max activation is below min_activation_threshold")
 add_args("--use_old_input", action="store_true", help="If true, intermediate results from previos runs are used and run is continued")
 add_args("--save_every_x_steps", default=10, type=int, help="store intermediate result every x steps")
 

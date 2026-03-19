@@ -799,159 +799,33 @@ def circuit_analysis_barplot(
 # Circuit Analysis - Pareto Points
 #----------------------------------------------------------------------------------------------------
 
-def pareto(
+def pareto_curve(
+    args,
     df:pd.DataFrame,
-    x_metric:str,
-    y_metric:str,
-    all_tasks:List[str], 
-    min_performance:int=75, 
-    max_circuit_size:int=float("inf"),
-    save_image:bool=False, 
-    show_image:bool=True,
+    best_point:pd.DataFrame,
+    pareto_frontier:pd.DataFrame,
+    x_metric:str="size",
+    y_metric:str="performance",
     out_path:str="", 
-    focus_on_performance=False
     ):
-    """Pareto frontier between two metrics
-
-    Args:
-        df (pd.DataFrame): df
-        x_metric (str) columm name of df,
-        y_metric (str): column name of df,
-        all_tasks (List[str]): list of tasks ["ioi", "GreaterThan", "induction", "GenderedPronouns", "Docstring"]
-        min_performance (int, optional): minimal performance. Defaults to 75.
-        total_model_heads (int, optional): total number of heads in model. Defaults to 144.
-        save_image (bool, optional): save_img. Defaults to True.
-        out_path (str, optional): out_path. Defaults to "".
-
-    Raises:
-        Exception: _description_
-
-    Returns:
-        _type_: _description_
-    """
-    
-    for task in all_tasks:
-        df_task = df[df["task"]== task] 
-
-        def pareto_frontier(df, x_metric, y_metric, maximize_y=True, minimize_x=True):
-            df_sorted = df.sort_values(by=[x_metric], ascending=minimize_x)
-            pareto = []
-            best_y = -float("inf") if maximize_y else float("inf")
-            for _, row in df_sorted.iterrows():
-                y = row[y_metric]
-                if maximize_y:
-                    if y > best_y:
-                        pareto.append(row)
-                        best_y = y
-                else:
-                    if y < best_y:
-                        pareto.append(row)
-                        best_y = y
-            return pd.DataFrame(pareto)
-
-        pareto = pareto_frontier(df_task, x_metric, y_metric)
-        
-        try:
-            best_point = df_task[df_task["performance"] >= min_performance].sort_values(by=["size", "performance"], ascending = [True, False]).iloc[0]
-            if best_point["size"] > max_circuit_size:
-                raise Exception
-
-        except:            
-            # if no point is over 75%, choose that point on the pareto curve furthest away from line between leftmost and rightmost pareto point
-            df_pareto = df_task.loc[pareto.index]
-            x = df_pareto["size"].values
-            y = df_pareto["performance"].values
-            
-            # line between leftmost and rightmost pareto point
-            p1 = np.array([x[0], y[0]])
-            p2 = np.array([x[-1], y[-1]])
-            v = p2 - p1
-            v_norm = np.linalg.norm(v)
-
-            # only choose pareto points above line
-            signed_distances = []
-            for i in range(len(x)):
-                # distance of each point above line to it
-                p = np.array([x[i], y[i]])
-                cross = np.cross(v, p - p1)
-                signed_distances.append(cross / v_norm)
-
-            signed_distances = np.array(signed_distances)
-            valid = signed_distances > 0
-            
-            def sublistfinder(list, sublist, last_knee=False):
-                if not last_knee:
-                    for i in  range(len(list)-len(sublist)):
-                        if (list[i:i+len(sublist)] == sublist).all():
-                            return i
-                else:
-                    for i in range(len(list)-len(sublist), 0, -1):
-                        if (list[i:i+len(sublist)] == sublist).all():
-                            return i
-                return -1    
-            
-            if not any(valid):
-                #   Case 1: no valid pareto point:
-                # - for FLAP: choose point with highest performance, consistent with constraint circuits_siue <= max_circuit_size
-                # - for PP and APP: choose point with smallest circuit
-                if focus_on_performance and len(df_pareto)-1 > 0:
-                    for knee_idx in range(len(df_pareto)-1, 0, -1):
-                        if df_pareto.iloc[knee_idx].size <= max_circuit_size:
-                            break
-                else:
-                    knee_idx=0
-            
-            elif not sublistfinder(valid[1:-1], [True, False]) == -1 and not sublistfinder(valid[1:-1], [False, True]) == -1:
-                #   Case 2: "Zig-Zagging" pareto point: "optimal line" is crossed multiple times 
-                # - for FLAP: choose last point crossing line
-                # - for PP and APP: choose argmax
-                if focus_on_performance and len(df_pareto)-1 > 0:
-                    knee_idx = sublistfinder(valid, [True, False], last_knee=True)
-                else:
-                    knee_idx = sublistfinder(valid, [True, False])
-
-
-            else:  
-                #    Case 3: else
-                # - take valid pareto point furthest from line 
-                knee_idx = np.argmax(signed_distances * valid)
-                
-                if focus_on_performance:
-                    if signed_distances[knee_idx] < 1 and df_pareto["size"].values[-1] < max_circuit_size:
-                        knee_idx = -1
-                        
-                    # if behind knee point is still one very steep point with steeper gradient, take it 
-                    delta_x = [x[i+1] - x[i] for i in range(len(df_pareto["size"].values)-1)]
-                    delta_y = [y[i+1] - y[i] for i in range(len(df_pareto["performance"].values)-1)]
-                    gradient = [dy / dx if dx != 0 else float("-inf") for dx, dy in zip(delta_x, delta_y)] 
-                    if max(gradient[knee_idx:]) > gradient[knee_idx-1]:
-                        grad_idx = gradient.index(max(gradient[knee_idx:])) + 1
-                        if grad_idx < max_circuit_size:
-                            knee_idx = grad_idx
-
-            best_point = df_pareto.iloc[knee_idx]
-            print(best_point)
-            #best_point = df_task[df_task["performance"] >= df_task["performance"].mean()].sort_values(by=["size", "performance"], ascending = [True, False]).iloc[0]
-
-
+   
         fig, ax = plt.subplots(figsize=(8,6))
-        plt.scatter(df_task["size"], df_task["performance"], label="All Hyperparmetres", alpha=0.6)
-        plt.plot(pareto["size"], pareto["performance"], color="red", linewidth=2, label="Pareto front")
-        plt.scatter(best_point["size"], best_point["performance"],
+        plt.scatter(df[x_metric], df[y_metric], label="All Hyperparmetres", alpha=0.6)
+        plt.plot(pareto_frontier[x_metric], pareto_frontier[y_metric], color="red", linewidth=2, label="Pareto front")
+        plt.scatter(best_point[x_metric], best_point[y_metric],
                     color="green", s=120, marker="o", edgecolors="black", zorder=5,
                     label=f"Pareto Point\n(size={best_point['size']}, perf={best_point['performance']:.2f})")
 
         plt.xlabel("Circuit Size")
         plt.ylabel("Performance")
-        plt.title("Pareto Frontier: " + task)
+        plt.title("Pareto Frontier: " + args.task)
         plt.legend()
         plt.grid(True)
-        if show_image:
+        if args.show:
             plt.show()
         
-        if save_image:
-            save_img(fig, out_path=out_path, name=f"pareto_{task}.png")
-    return best_point
+        if args.save_img:
+            save_img(fig, out_path=out_path, name=f"pareto_{args.task}.png")
 
 #----------------------------------------------------------------------------------------------------
 # Circuit Analysis - Recall/Precicion Venn Diagram

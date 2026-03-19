@@ -17,6 +17,17 @@ def create_folder(path):
         os.makedirs(path)
 
 
+def get_base_path(args, method):
+    base_path = f"{args.out_path}/{args.model_name}/{args.task}"
+    if method == "PP":
+        base_path=base_path + "/PP"
+    elif method == "FLAP":
+        path = base_path + "/Pruning"
+    elif method == "APP":
+        path = base_path + "/APP"    
+    create_folder(path)
+    return path
+
 def store_df(df, out_path, name):
     create_folder(out_path)
 
@@ -46,6 +57,7 @@ def read_df(in_path, name):
 
     print(f"DataFrame saved as {name} at {in_path}")
     return df
+
 
 def save_panda_to_text(df, out_path, name):
     create_folder(out_path)
@@ -86,6 +98,7 @@ def save_img(fig, out_path, name):
 def save_parser_information(args, subfolder, name):
     with open(os.path.join(subfolder, name), 'w') as f:
         json.dump(vars(args), f, indent=2)
+
 
 def load_parser_information(filepath):
     with open(filepath, 'r') as f:

@@ -64,6 +64,7 @@ class PathPatching(TaskInterface):
             )
 
         self.metric_name = metric_name
+        self.head_scores_dict = {}  # save the scores of each head to speed-up computation: {(layer_idx, head_idx, component): [scores]}
 
     
     #----------------------------------------------------------------------------------------------------

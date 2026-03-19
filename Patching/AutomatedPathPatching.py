@@ -32,6 +32,9 @@ def automated_PP(
     resid_importance_threshold=2, 
     INPUT_PRUING_CIRCUIT=None
 ):
+    
+    circuits_dict = {}
+    
     if INPUT_PRUING_CIRCUIT == None:
         if args.pruning_circuit == "none":    
             PRUNING_CIRCUIT = None
@@ -55,109 +58,107 @@ def automated_PP(
         calc_FLOP=args.calc_FLOP, 
         cache_dir=args.cache_dir
     )
-
-    pp.reset_efficency_metrics()
     
-    # ----- create folder structure -----
-    if args.pruning_circuit == "none":    
-        result_folder = f"{args.model_name}/{args.task}/path/automatic/maxVal-{args.min_value_threshold}/importance-{args.importance_threshold}"
-    elif args.pruning_circuit == "hybrid":    
-        result_folder = f"{args.model_name}/{args.task}/APP/maxVal-{args.min_value_threshold}/importance-{args.importance_threshold}"
-    else:
-        result_folder = f"{args.model_name}/{args.task}/APP_{args.pruning_circuit}/maxVal-{args.min_value_threshold}/importance-{args.importance_threshold}"
+    
+    for min_value_threshold in args.min_value_threshold:
+        for importance_threshold in args.importance_threshold:
+            
+            pp.reset_efficency_metrics()
+            
+            # ----- create folder structure -----
+            if INPUT_PRUING_CIRCUIT == None:    
+                result_folder = f"{args.model_name}/{args.task}/PP/automatic/maxVal-{min_value_threshold}/importance-{importance_threshold}"
+            else:
+                result_folder = f"{args.model_name}/{args.task}/APP/maxVal-{min_value_threshold}/importance-{importance_threshold}"
+           
 
-
-    if args.out_path == "":
-        subfolder = result_folder
-    else:
-        subfolder = os.path.join(args.out_path, result_folder)
-        
-    print("result", subfolder)
-    if not os.path.isdir(subfolder):
-        create_folder(subfolder)
-
-    # ------ load intermediate results, if available and requested -------
-    if args.use_old_input:
-        try:
-            with open(os.path.join(subfolder, "intermediate.pkl"), "rb") as f:
-                PP_information = pickle.load(f)
-            with open(os.path.join(subfolder, "results.json"), "r") as f:
-                old_results = json.load(f)
-        except:
-            raise(f"No intermediate results at {subfolder}. Either point to correct position of intermediate results or set \"use_old_input=False\".")
-
-    else:
-        PP_information = None
-        old_results = None
-
-    if pp._model.cfg.n_heads * pp._model.cfg.n_layers >= 150:
-        print_vals = True
-    else:
-        print_vals=True
-
-    # ------ run automated path patching ------
+            if args.out_path == "":
+                subfolder = result_folder
+            else:
+                subfolder = os.path.join(args.out_path, result_folder)
                 
-    if "Qwen" in args.model_name:
-        CIRCUIT = pp.patch_whole_graph_qwen(
-            PRUNING_CIRCUIT=PRUNING_CIRCUIT,
-            subfolder=subfolder,
-            importance_threshold=args.importance_threshold, 
-            min_value_threshold=args.min_value_threshold,
-            save_every_x_steps=args.save_every_x_steps, 
-            resid_importance_threshold = resid_importance_threshold,
-            
-            verbose=args.verbose,
-            print_vals=print_vals,
-        
-            PP_information=PP_information, 
-            old_results= old_results,
-            
-            save_img=args.save_img, 
-            show_img = args.show, 
-            )
+            print("result", subfolder)
+            if not os.path.isdir(subfolder):
+                create_folder(subfolder)
 
-    else:
-        CIRCUIT = pp.patch_whole_graph(
-            PRUNING_CIRCUIT=PRUNING_CIRCUIT,
-            subfolder=subfolder,
-            importance_threshold=args.importance_threshold, 
-            min_value_threshold=args.min_value_threshold,
-            save_every_x_steps=args.save_every_x_steps, 
-            resid_importance_threshold= resid_importance_threshold, 
-            
-            verbose=args.verbose,
-            print_vals=print_vals,
-            
-            PP_information=PP_information, 
-            old_results= old_results,
-            
-            save_img=args.save_img, 
-            show_img = args.show, 
-            )
+            # ------ load intermediate results, if available and requested -------
+            if args.use_old_input:
+                try:
+                    with open(os.path.join(subfolder, "intermediate.pkl"), "rb") as f:
+                        PP_information = pickle.load(f)
+                    with open(os.path.join(subfolder, "results.json"), "r") as f:
+                        old_results = json.load(f)
+                except:
+                    raise(f"No intermediate results at {subfolder}. Either point to correct position of intermediate results or set \"use_old_input=False\".")
 
-    
-    results = {
-        "GFLOP":[pp.FLOP_counter],
-        "n_forward_passes":[pp.n_forward_passes], 
-        "comp_time": [pp.elapsed_time],
-        "size_circuit": [circuit_size(CIRCUIT)],
-    }
+            else:
+                PP_information = None
+                old_results = None
 
-    results = pd.DataFrame(data=results)
+            if pp._model.cfg.n_heads * pp._model.cfg.n_layers >= 150:
+                print_vals = True
+            else:
+                print_vals=True
 
-    if args.save_text:
-        save_circuit(CIRCUIT, subfolder, "circuit.txt")
-        save_parser_information(args, subfolder, "parser_information.txt")
-        store_df(results, subfolder, "results.json")
+            # ------ run automated path patching ------
+                        
+            if "Qwen" in args.model_name:
+                CIRCUIT = pp.patch_whole_graph_qwen(
+                    PRUNING_CIRCUIT=PRUNING_CIRCUIT,
+                    subfolder=subfolder,
+                    importance_threshold=importance_threshold, 
+                    min_value_threshold=min_value_threshold,
+                    save_every_x_steps=args.save_every_x_steps, 
+                    resid_importance_threshold = resid_importance_threshold,
+                    
+                    verbose=args.verbose,
+                    print_vals=print_vals,
+                
+                    PP_information=PP_information, 
+                    old_results= old_results,
+                    
+                    save_img=args.save_img, 
+                    show_img = args.show, 
+                    )
+
+            else:
+                CIRCUIT = pp.patch_whole_graph(
+                    PRUNING_CIRCUIT=PRUNING_CIRCUIT,
+                    subfolder=subfolder,
+                    importance_threshold=importance_threshold, 
+                    min_value_threshold=min_value_threshold,
+                    save_every_x_steps=args.save_every_x_steps, 
+                    resid_importance_threshold= resid_importance_threshold, 
+                    
+                    verbose=args.verbose,
+                    print_vals=print_vals,
+                    
+                    PP_information=PP_information, 
+                    old_results= old_results,
+                    
+                    save_img=args.save_img, 
+                    show_img = args.show, 
+                    )
+
             
-    return CIRCUIT
+            results = {
+                "GFLOP":[pp.FLOP_counter],
+                "n_forward_passes":[pp.n_forward_passes], 
+                "comp_time": [pp.elapsed_time],
+                "size_circuit": [circuit_size(CIRCUIT)],
+            }
 
-if __name__ == "__main__":
-    
-    args = parser.parse_args()
-    set_PATH(args.out_path)
-    print(args)
-    
-    _ = automated_PP(     
-        args=args
-    )
+            results = pd.DataFrame(data=results)
+
+            if args.save_text:
+                save_circuit(CIRCUIT, subfolder, "circuit.txt")
+                save_parser_information(args, subfolder, "parser_information.txt")
+                store_df(results, subfolder, "results.json")
+                
+            if circuits_dict.get(min_value_threshold) is None:
+                circuits_dict[min_value_threshold] = {importance_threshold: CIRCUIT}
+            else:
+                circuits_dict[min_value_threshold][importance_threshold] = CIRCUIT  
+                
+                    
+    return circuits_dict
