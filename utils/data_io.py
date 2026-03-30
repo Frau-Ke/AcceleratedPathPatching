@@ -25,6 +25,8 @@ def get_base_path(args, method):
         base_path = base_path + "/Pruning"
     elif method == "APP":
         base_path = base_path + "/APP"    
+    elif method=="ACDC":
+        base_path = base_path + "/ACDC"
     create_folder(base_path)
     return base_path
 

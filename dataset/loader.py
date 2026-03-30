@@ -5,6 +5,7 @@ from .GreaterThan import GreaterThan, GreaterThanQwen
 from .NameInduction import NameInduction
 from .GenderedPronoun import GenderedPronoun
 from .Docstring import Docstring
+from .tests.IOI_test import IOI_dataset_test
 from torch.utils.data import DataLoader
 
 def load_dataset(
@@ -90,6 +91,10 @@ def load_dataset(
             prepend_bos=prepend_bos
         )
         
+    
+    elif task == "IOI_test":
+        dataset = IOI_dataset_test()
+    
     else:
         raise Exception(f"Requested Task {task} is not implemented. \n Choose one of [IOI, Induction, GreaterThan, GenderedPronoun, Docstring]")
     

@@ -23,6 +23,7 @@ add_args(
     type=str,
     default="IOI",
     choices=["IOI", 
+             "IOI_test",
             "GreaterThan",
             "Induction",
             "GenderedPronouns", 

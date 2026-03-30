@@ -37,20 +37,17 @@ def load_hooked_transformer(
     
     model= HookedTransformer.from_pretrained(
         model_name=model_name,
-        center_unembed=False,                    # set mean of every output vector W_U to zero
-        center_writing_weights=False,            # normalize all input writing to residual stream
-        fold_ln=False,                           # regularisation method: Hooked Transformer handels centering & normalization & linear operations all together, factor out te linear part
+        center_unembed=True,                    # set mean of every output vector W_U to zero
+        center_writing_weights=False,   #F        # normalize all input writing to residual stream
+        fold_ln=False,          #F                 # regularisation method: Hooked Transformer handels centering & normalization & linear operations all together, factor out te linear part
                                                 # almost linear map: variance scalling divides by norm of vector -> norm not linear
         refactor_factored_attn_matrices=False,   # use low-rank matrices W_OV, W_QK instead of W_O and W_V (W_Q and W_K)
         torch_dtype=dtype,
         cache_dir=cache_dir, 
 
     )
-    #CAREFUL
-    #model.set_use_split_qkv_input(True)
 
     if patching_method == "acdc":
-
         model.set_use_attn_result(True)
         model.set_use_split_qkv_input(True)
         if "use_hook_mlp_in" in model.cfg.to_dict():

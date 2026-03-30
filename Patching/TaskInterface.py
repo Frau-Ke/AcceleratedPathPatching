@@ -64,7 +64,7 @@ class TaskInterface:
         
         
         # dataset
-        self.dataset: Union[IOI_dataset, PairedFacts] = load_dataset(
+        self.dataset = load_dataset(
             task=task, 
             patching_method=patching_method,
             tokenizer=self.tokenizer, 
@@ -79,7 +79,7 @@ class TaskInterface:
         self.clean_tokens: Int[Tensor, "batch pos-1"] = self.dataset.clean_tokens
         self.corrupted_tokens:  Int[Tensor, "batch pos-1"] = self.dataset.corrupted_tokens
         self.answer_tokens:  Int[Tensor, "batch 2"] = self.dataset.answer_tokens
-        
+          
         # cached activations
         self._model.reset_hooks(including_permanent=True)
 
@@ -104,6 +104,7 @@ class TaskInterface:
             FLOP_per_forward_pass = FlopCountAnalysis(self._model, self.clean_tokens)
             print("FLOP per forwad", FLOP_per_forward_pass)
             self.module_FLOPS = FLOP_per_forward_pass.by_module()
+            # inital forward pass on corrupted and clean dataset to get clean/corrupted caches
             self.n_forward_passes += 2
             self.FLOP_counter += 2 * FLOP_per_forward_pass.total() / 1e9
         

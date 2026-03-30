@@ -41,6 +41,54 @@ def accuracy(
 #----------------------------------------------------------------------------------------------------   
 # Logit Difference
 #----------------------------------------------------------------------------------------------------
+def ave_logit_diff_acdc(
+    logits: Float[Tensor, "batch seq d_vocab"],
+    correct_answers: Union[Int[Tensor, "batch 1"], Dict],
+    wrong_answers: Union[Int[Tensor, "batch 1"], Dict],
+    target_idx: Optional[Int[Tensor, "batch 2"]],
+    per_prompt=False,
+    task="",
+    model_name="gpt2",
+) -> Union[Float[Tensor, "batch"], float]:
+    '''
+    Returns logit difference between the correct and incorrect answer.
+
+    If per_prompt=True, return the array of differences rather than the average.
+    '''
+    
+    if task=="GreaterThan":
+        answer_logit_diff= ave_logits_diff_greater_than(
+            logits=logits,
+            correct_answer_tokens=correct_answers,
+            wrong_answer_tokens=wrong_answers,
+            target_idx=target_idx, 
+            model_name=model_name            
+        )
+    elif task=="Docstring":
+        """
+        "We measure whether an intervention changes the difference between the logit
+        of the correct answer C and the highest wrong-answer logit 
+        (maximum logit of all other definition and docstring argument names including 
+        corrupted variants, i.e. A, B, rand1, rand2, ..., maximum recalculated every time)"
+        cited from https://www.lesswrong.com/posts/u6KXXmKFbXfWzoAXn#Results__The_Docstring_Circuit
+        """
+        
+        answer_logit_diff = ave_logit_diff_dosctring(
+            logits=logits, 
+            correct_answer_tokens=correct_answers,
+            wrong_answer_tokens=wrong_answers,
+        )
+        
+    else:
+        answer_logit_diff = ave_logits_diff_vanilla(
+            logits=logits, 
+            correct_answer_tokens=correct_answers,
+            wrong_answer_tokens=wrong_answers,
+            target_idx=target_idx,
+        )
+     # Find logit difference
+    return -answer_logit_diff if per_prompt else -answer_logit_diff.mean().item() 
+
 
 def ave_logit_diff(
     logits: Float[Tensor, "batch seq d_vocab"],
@@ -118,7 +166,7 @@ def ave_logits_diff_vanilla(
     else:
         right_predicition_logits: Float[Tensor, "batch"] = logits[range(logits.size(0)), -1, correct_answer_tokens]
         wrong_prediction_logits: Float[Tensor, "batch"] = logits[range(logits.size(0)), -1, wrong_answer_tokens]
-
+    
     return right_predicition_logits - wrong_prediction_logits
     
 
@@ -204,7 +252,8 @@ def logit_diff_preserve_performance(
     wrong_answers: Int[Tensor, "batch 1"],
     target_idx: Int[Tensor, "batch 2"], 
     model_name:str="gpt2", 
-    task=""
+    task="", 
+    per_prompt=False
 ) -> float:
     '''
     We calibrate this so that the value is 0 when performance isn't harmed (i.e. same as IOI dataset),
@@ -216,7 +265,8 @@ def logit_diff_preserve_performance(
         wrong_answers= wrong_answers,
         target_idx=target_idx,
         task=task,
-        model_name=model_name
+        model_name=model_name, 
+        per_prompt=per_prompt
         )
     
     return (patched_logit_diff - clean_logit_diff) / (clean_logit_diff - corrupted_logit_diff)
@@ -346,38 +396,28 @@ def logprobs_greater_than_base_val(
 
 
 def KL_divergence(
-    logits: Float[Tensor, "batch seq d_vocab"], # For normal run vs after unembedding
-    base_logits: Float[Tensor, "batch seq d_vocab"],  # targt distribution
+    logits: Float[Tensor, "batch seq d_vocab"], 
+    base_logits: Float[Tensor, "batch seq d_vocab"], 
     target_idx: Optional[Int[Tensor, "batch 2"]] = None,
     answer_tokens :Optional[Int[Tensor, "batch 2"]] = None,
-    last_seq_element_only = False,
-    use_only_target: bool = False, # only necessary or induction task 
-    use_answer_tokens: bool = False
+    only_answer_logits: bool = False
     ) -> float:
-    
-    if last_seq_element_only:  # for ioi        
-        logits = logits[target_idx[:, 0], target_idx[:, 1]]
-        base_logits = base_logits[target_idx[:, 0], target_idx[:, 1]]
-    
+
+    logits = logits[target_idx[:, 0], target_idx[:, 1]]
+    base_logits = base_logits[target_idx[:, 0], target_idx[:, 1]]
     
     logprobs = F.log_softmax(logits, dim=-1).detach()
     base_log_probs = F.log_softmax(base_logits, dim=-1).detach() #TODO: in partial
-    
     assert logprobs.shape == base_log_probs.shape
-    kl_div = F.kl_div(input=logprobs, target=base_log_probs, log_target=True, reduction="none").sum(dim=-1)
     
-    if use_only_target:
-        assert target_idx is not None
-        # use for induction!
-        kl_div = kl_div[target_idx[:, 0], target_idx[:, 1]]
-
-    
-    elif use_answer_tokens:
+    if only_answer_logits:
         assert answer_tokens is not None and target_idx is not None
-        kl_div = kl_div[target_idx[:, 0], 
-                        target_idx[:, 1], 
-                        answer_tokens[:, 0]]
-    return kl_div.mean()
+        kl_div = F.kl_div(input=logprobs, target=base_log_probs, log_target=True, reduction="none")[target_idx[:, 0], answer_tokens[:, 0]]
+        
+    else:   
+        kl_div = F.kl_div(input=logprobs, target=base_log_probs, log_target=True, reduction="none").sum(dim=-1)
+
+    return kl_div.mean().item()
         
 def KL_div_compare_to_base_val(
     logits: Float[Tensor, "batch seq d_vocab"],

@@ -90,7 +90,7 @@ def init_metric_and_cache_average(
     
     ### Average Logits Difference
     if metric_name == "logits_diff":
-        assert task in ["IOI", "Induction", "GreaterThan", "GenderedPronouns", "Docstring"], "Logits difference metric can only be used with the tasks ioi, docstring or greaterThan"
+        assert task in ["IOI", "IOI_test", "Induction", "GreaterThan", "GenderedPronouns", "Docstring"], "Logits difference metric can only be used with the tasks ioi, docstring or greaterThan"
 
         clean_distribution_average = ave_logit_diff(
             clean_logits, 
@@ -121,8 +121,8 @@ def init_metric_and_cache_average(
                             model_name=model_name, 
                             task=task
                             )
-        elif patching_method == "path" or  patching_method == "acdc":
-
+        elif patching_method == "path":
+            
             metric = partial(logit_diff_preserve_performance,
                                 corrupted_logit_diff = corrupted_distribution_average,
                                 clean_logit_diff = clean_distribution_average,
@@ -133,7 +133,28 @@ def init_metric_and_cache_average(
                                 task=task
                                 )
     
-    
+        elif  patching_method == "acdc":
+            metric = partial(
+                ave_logit_diff_acdc,            
+                correct_answers=dataset.correct_answers,
+                wrong_answers=dataset.wrong_answers,    
+                target_idx=dataset.target_idx,
+                task=task,
+                model_name=model_name
+            )
+                
+            
+            
+            """metric = partial(logit_diff_preserve_performance,
+                                corrupted_logit_diff = corrupted_distribution_average,
+                                clean_logit_diff = clean_distribution_average,
+                                correct_answers=dataset.correct_answers,
+                                wrong_answers=dataset.wrong_answers,  
+                                target_idx = dataset.target_idx, 
+                                model_name=model_name, 
+                                task=task, 
+                                per_prompt=False
+                                )"""
     ### Probability
     elif metric_name == "probs": 
         if task == "GreaterThan":
@@ -173,7 +194,22 @@ def init_metric_and_cache_average(
                                 last_seq_element_only = True
                                 )
                             
-        elif patching_method == "path" or patching_method == "acdc":
+        elif patching_method == "path":
+            clean_distribution_average = logprobs_of_right_answer(
+                clean_logits, 
+                dataset.answer_tokens, 
+                dataset.target_idx,
+                True
+            )
+                                                                    
+            metric = partial(
+                logprobs_compare_to_base_val,
+                base_val= clean_distribution_average,
+                answer_tokens=dataset.answer_tokens,
+                target_idx = dataset.target_idx,
+                last_seq_element_only = True
+                )
+        elif patching_method == "acdc":
             clean_distribution_average = logprobs_of_right_answer(
                 clean_logits, 
                 dataset.answer_tokens, 
@@ -189,24 +225,8 @@ def init_metric_and_cache_average(
                 last_seq_element_only = True
                 )
             
-            clean_distribution_average = logprobs_of_right_answer(
-                clean_logits, 
-                dataset.answer_tokens, 
-                dataset.target_idx,
-                True
-            )
-            
-            metric = partial(
-                logprobs_compare_to_base_val,
-                base_val= clean_distribution_average,
-                answer_tokens=dataset.answer_tokens,
-                target_idx = dataset.target_idx,
-                last_seq_element_only = True
-                )
-    
-    
     ### KL Divergence
-    elif metric_name == "KL_divergence":
+    elif metric_name == "kl_divergence":
         if patching_method == "activation":
             clean_distribution_average = KL_divergence(
                                 logits=corrupted_logits, 
@@ -253,8 +273,8 @@ def init_metric_and_cache_average(
                 KL_divergence,
                 base_logits = clean_logits,
                 target_idx = dataset.target_idx,
-                last_seq_element_only = True,
-                use_only_target = True         
+                answer_tokens = dataset.answer_tokens,
+                only_answer_logits = False         
             )   
     return metric
 
