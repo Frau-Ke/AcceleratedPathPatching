@@ -22,11 +22,11 @@ def get_base_path(args, method):
     if method == "PP":
         base_path=base_path + "/PP"
     elif method == "FLAP":
-        path = base_path + "/Pruning"
+        base_path = base_path + "/Pruning"
     elif method == "APP":
-        path = base_path + "/APP"    
-    create_folder(path)
-    return path
+        base_path = base_path + "/APP"    
+    create_folder(base_path)
+    return base_path
 
 def store_df(df, out_path, name):
     create_folder(out_path)
