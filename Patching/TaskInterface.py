@@ -35,7 +35,7 @@ class TaskInterface:
         t.set_grad_enabled(False)
         
         self.patch_mlp = patch_mlp 
-        
+        self.metric_name = metric_name
         self._device = device
         self.N = N
         self.task = task
@@ -95,7 +95,7 @@ class TaskInterface:
             corrupted_logits=self.corrupted_logits,
             task=task, 
             patching_method=self.patching_method,
-            metric_name=metric_name,
+            metric_name=self.metric_name,
             dataset=self.dataset, 
             model_name=self.model_name,
             )   

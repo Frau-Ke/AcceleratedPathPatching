@@ -18,7 +18,7 @@ def create_folder(path):
 
 
 def get_base_path(args, method):
-    base_path = f"{args.out_path}/{args.model_name}/{args.task}"
+    base_path = f"{args.out_path}{args.model_name}/{args.task}"
     if method == "PP":
         base_path=base_path + "/PP"
     elif method == "FLAP":
@@ -27,6 +27,8 @@ def get_base_path(args, method):
         base_path = base_path + "/APP"    
     elif method=="ACDC":
         base_path = base_path + "/ACDC"
+    elif method=="acceleratedACDC":
+        base_path = base_path + "/acceleratedACDC"
     create_folder(base_path)
     return base_path
 

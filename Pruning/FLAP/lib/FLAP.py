@@ -329,11 +329,11 @@ def evaluate_FLAP_over_cliff_point(
                 title=f"{pruning_method} FLAP {cliff_point} cliff for {args.task}", 
                 save_name=f"{pruning_method}Heatmap"
             )
-
+            
+        save_circuit(CIRCUIT, subfolder, name=f"{pruning_method}_circuit.txt")
         # ---- save pruning_statistics_df, parser and circuit ----
         if args.save_text:
             save_parser_information(args, subfolder, f"{pruning_method}_parser_info.json")
-            save_circuit(CIRCUIT, subfolder, name=f"{pruning_method}_circuit.txt")
             save_panda_to_text(loop_results, out_path=subfolder, name=f"{pruning_method}_result")
             
         return CIRCUIT, cliff

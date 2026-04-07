@@ -214,7 +214,7 @@ def head_wise_pruning_scores(args, model, tokenizer, activations, pruning_metric
 
         subset.update({'self_attn.o_proj': find_layers(layer)['self_attn.o_proj']})
         
-        if args.patch_mlp:
+        if args.include_mlp:
             subset.update({'mlp.down_proj': find_layers(layer)['mlp.down_proj']})
 
         if f"model.layers.{i}" in getattr(model, 'hf_device_map', {}):   ## handle the case for llama-30B and llama-65B, when the device map has multiple GPUs;
@@ -341,7 +341,7 @@ def CIRCUIT_from_scores(
 
         attn_metric = attn_metric.reshape(n_layers, -1, head_dim).mean(dim=2)  # shape [12, 12]
         
-        if args.patch_mlp:
+        if args.include_mlp:
             mlp_metric = torch.stack(mlp_metric_list)
             mlp_metric = standarlization(mlp_metric)
         
@@ -352,7 +352,7 @@ def CIRCUIT_from_scores(
             
         
         else:
-            if args.patch_mlp:
+            if args.include_mlp:
                 prune_metric = torch.cat([attn_metric.view(-1), mlp_metric.view(-1)])
             else:
                 prune_metric = attn_metric.view(-1)
@@ -362,7 +362,7 @@ def CIRCUIT_from_scores(
             compression_weight[indices < attn_metric.numel()] = 512.0 / 3
             threshold = sorted_prune[torch.argmin(torch.abs(torch.cumsum(compression_weight, 0) - torch.sum(compression_weight)*(1 - pruning_ratio)))]
             attn_mask = (attn_metric > threshold)
-            if args.patch_mlp:
+            if args.include_mlp:
                 mlp_mask = (mlp_metric > threshold)
                 
     elif args.structure in ["UL-UM", "UL-MM"]:
@@ -382,7 +382,7 @@ def CIRCUIT_from_scores(
             attn_mask.append(W_mask)
             
         attn_mask = torch.stack(attn_mask) 
-        if args.patch_mlp:
+        if args.include_mlp:
             mlp_mask = torch.stack(mlp_mask)
     
     # STEP 3: Adaptive Strucutre Search: search model globally to compress the model 

@@ -21,9 +21,6 @@ from matplotlib_venn import venn2, venn2_circles
 import matplotlib.patches as Patch
 from matplotlib_venn.layout.venn2 import DefaultLayoutAlgorithm
 
-
-
-
 title_font=18
 fontsize=10
 labelsize=14
@@ -808,6 +805,7 @@ def pareto_curve(
     y_metric:str="performance",
     out_path:str="", 
     ):
+    
    
         fig, ax = plt.subplots(figsize=(8,6))
         plt.scatter(df[x_metric], df[y_metric], label="All Hyperparmetres", alpha=0.6)
@@ -825,7 +823,8 @@ def pareto_curve(
             plt.show()
         
         if args.save_img:
-            save_img(fig, out_path=out_path, name=f"pareto_{args.task}.png")
+            print("path", out_path)
+            save_img(fig, out_path=out_path, name=f"results/_N-{args.N}_{args.metric}_pareto.png")
 
 #----------------------------------------------------------------------------------------------------
 # Circuit Analysis - Recall/Precicion Venn Diagram

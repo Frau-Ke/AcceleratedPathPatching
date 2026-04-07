@@ -52,7 +52,8 @@ add_args("--eval_batch_size", type=int, default=200)
 add_args("--eval_seed", default=193485603, type=int)
 
 
-add_args("--patch_mlp", action="store_true")
+add_args("--patch_mlp", action="store_true") # TODO: clearer naming
+add_args("--include_mlp", action="store_true", help="") # TODO: clearer naming
 add_args("--calc_FLOP", action="store_true", help="if true, calculate FLOPs")
 
 
@@ -62,8 +63,11 @@ add_args("--min_value_threshold", nargs="+", default=[0], type=float, help="igno
 add_args("--use_old_input", action="store_true", help="If true, intermediate results from previos runs are used and run is continued")
 add_args("--save_every_x_steps", default=10, type=int, help="store intermediate result every x steps")
 
-# Accelerated Path Patching
-add_args("--pruning_circuit", default="none", choices=["none", "vanilla", "contrastive", "hybrid"], help="Pruning Circuits for APP, if none then PP")
+# ACDC
+add_args("--num_threshold", default=21,  type=int, help="number of tested threshold values between 1.0e-4 and 1.0e0")
+add_args("--remove_redundant", action="store_true", help="")
+add_args("--abs_value_threshold",action="store_true", help="")
+add_args("--max_epochs", type=int, default=100000)
 
 # FLAP
 add_args("--lowest_sparsity", type=int, default=0, help="min sparsity")
@@ -71,6 +75,10 @@ add_args("--highest_sparsity", type=int, default=100, help="max sparsity")
 add_args("--step_size", type=int, default=1, help="step size")
 add_args("--structure", type=str, default="AL-AM", choices=["UL-UM", "UL-MM", "AL-MM", "AL-AM", 'N/A'])
 add_args("--cliff_point_list", nargs='+', default=["first", "biggest", "fixed"])
+
+# Accelerated Path Patching / ACDC
+add_args("--pruning_circuit", default="none", choices=["none", "vanilla", "contrastive", "hybrid"], help="Pruning Circuits for APP, if none then PP")
+add_args("--do_accelerate", action="store_true", help="Use FLAP circuits to accelerate process")
 
 # Plotting, Prinitng, Saving
 add_args("--show", action="store_true")

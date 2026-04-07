@@ -10,7 +10,7 @@ from utils.model_loader import load_tokenizer, load_hooked_transformer
 from utils.circuit_functions import TPR, precision, circuit_size, merge_circuits
 from utils.eval_circuit import  batch_evaluate_circiut
 from utils.utils import get_model_parameters
-from utils.data_io import store_df
+from utils.data_io import store_df, get_base_path
 
 def pareto_analysis(
     args,
@@ -20,7 +20,8 @@ def pareto_analysis(
     min_performance:int=float("inf"), 
     max_circuit_size:int=float("inf"),
     focus_on_performance=False,
-    method_name:str="PP"
+    method_name:str="PP",
+    out_path:str=""
     ):
     """Pareto frontier between two metrics
 
@@ -29,8 +30,6 @@ def pareto_analysis(
         x_metric (str) columm name of df,
         y_metric (str): column name of df,
         min_performance (int, optional): minimal performance. Defaults to 75.
-        total_model_heads (int, optional): total number of heads in model. Defaults to 144.
-        save_image (bool, optional): save_img. Defaults to True.
         out_path (str, optional): out_path. Defaults to "".
 
     Raises:
@@ -139,12 +138,12 @@ def pareto_analysis(
                         knee_idx = grad_idx
 
         best_point = df_pareto.iloc[knee_idx]
-        if args.save_text:
+        """if args.save_text:
         
-            with open(f'{args.out_path}/{args.model_name}/results/{method_name}/{method_name}_df.txt', 'w') as f:
+            with open(f"{out_path}/{method_name}_df.txt", 'w') as f:
                 print(f"save df at {args.out_path}/{args.model_name}/results/{method_name}/{method_name}_df.txt")
                 f.write(df.to_string(header=False, index=False))
-
+        """
     return best_point, pareto
 
 
@@ -156,9 +155,11 @@ def find_best_PP_circuit(args, circuits_dict:dict, GT_CIRCUIT):
     # directory to Path Patching
     PP_df_results = pd.DataFrame(columns=["task", "maxValue", "importance", "performance", "accuracy", "size", "TPR", "P"])
     
-    if GT_CIRCUIT is None:_
-    directory = f"{args.out_path}/{args.model_name}/{args.task}/path/automatic"  
- 
+    if args.do_accelerate:
+        directory = f"{args.out_path}/{args.model_name}/{args.task}/APP/automatic"
+    else:
+        directory = f"{args.out_path}/{args.model_name}/{args.task}/path/automatic"    
+    
     eval_dataset = load_dataset(
         prepend_bos=False,
         task=args.task, 
@@ -219,7 +220,7 @@ def find_best_PP_circuit(args, circuits_dict:dict, GT_CIRCUIT):
     return PP_df_results
 
 
-def find_best_hybridFLAP_circuit(args, circuits_dict:dict, GT_CIRCUIT):
+def find_best_hybridFLAP_circuit(args, circuits_dict:dict, GT_CIRCUIT, method_name:str="FLAP"):
     
     _, _, epochs = get_model_parameters(args.model_name, args.N, input_batch_size=args.batch_size)
     tokenizer = load_tokenizer(args.model_name)
@@ -291,5 +292,77 @@ def find_best_hybridFLAP_circuit(args, circuits_dict:dict, GT_CIRCUIT):
 
         if args.save_text:
             store_df(df_results, out_path=directory, name="results_hybridFLAP.json")           
+
+    return df_results
+
+
+
+
+
+def find_best_ACDC_circuit(args, thresholds:list, circuits_dict:dict, GT_CIRCUIT, method_name:str):
+    
+    _, _, epochs = get_model_parameters(args.model_name, args.N, input_batch_size=args.batch_size)
+    tokenizer = load_tokenizer(args.model_name)
+    model_hooked = load_hooked_transformer(args.model_name, device=args.device, cache_dir=args.cache_dir)
+    df_results = pd.DataFrame(columns=["task", "threshold", "performance", "accuracy", "size", "TPR", "P"])
+
+    out_path=get_base_path(args, method_name)
+
+    eval_dataset = load_dataset(
+        prepend_bos=False,
+        task=args.task, 
+        patching_method="path",
+        tokenizer=tokenizer, 
+        N=args.N, 
+        device=args.device,
+        model_name=args.model_name,
+        seed=args.eval_seed
+    )
+
+    # ----- Average Logit Difference of the unpatched Model -----
+    with torch.no_grad():
+        logits_gt = model_hooked(eval_dataset.clean_tokens)
+        
+    ave_logit_gt = ave_logit_diff(
+        logits=logits_gt, 
+        correct_answers=eval_dataset.correct_answers, 
+        wrong_answers=eval_dataset.wrong_answers,
+        target_idx=eval_dataset.target_idx.to(args.device), 
+        task=args.task,
+        model_name=args.model_name
+        )
+
+    for threshold in thresholds:
+        CIRCUIT = circuits_dict[threshold]
+        
+        size = circuit_size(CIRCUIT)  
+        _, performance, accuracy = batch_evaluate_circiut(
+            model = model_hooked, 
+            CIRCUIT=CIRCUIT,
+            dataset=eval_dataset,
+            ave_logit_gt=ave_logit_gt,
+            task=args.task,
+            model_name=args.model_name, 
+            epochs = epochs, 
+            batch_size = args.batch_size 
+        )    
+        
+
+        TP_ratio = TPR(CIRCUIT, GT_CIRCUIT)
+        prec = precision(CIRCUIT, GT_CIRCUIT)
+
+        new_row = pd.DataFrame({
+            "task": [args.task],
+            "threshold": [threshold],
+            "performance": [performance],
+            "accuracy": [accuracy],
+            "size": [size], 
+            "TPR": [TP_ratio], 
+            "P":[prec]
+        }) 
+        df_results = pd.concat([df_results, new_row],  ignore_index=True)
+
+    if args.save_text:
+        store_df(df_results, out_path=out_path, name=f"results/_N-{args.N}_{args.metric}_circuits_metrics.json")           
 
     return df_results
